@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      # En Linux las deps nativas de xmlsec son paquetes del sistema (sin la
+      # fricción de Windows): basta apt.
+      - name: Instalar libs nativas (xmlsec/libxml2)
+        run: sudo apt-get update && sudo apt-get install -y libxml2-dev libxmlsec1-dev pkg-config
+
+      - name: Instalar dependencias
+        run: pip install -e ".[dev]"
+
+      - name: Lint (ruff)
+        run: ruff check .
+
+      - name: Formato (ruff)
+        run: ruff format --check .
+
+      - name: Tipos (mypy)
+        run: mypy
+
+      - name: Tests (pytest)
+        run: pytest -q

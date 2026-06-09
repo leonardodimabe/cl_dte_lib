@@ -1,0 +1,14 @@
+# --- Núcleo XML / criptografía ---
+lxml>=5.0            # construcción y parseo XML
+cryptography>=42.0   # carga certificado .pfx, RSA, firma
+xmlsec>=1.3.14       # firma XMLDSig (en Windows puede requerir wheels precompilados)
+
+# --- Comunicación SII ---
+requests>=2.31       # llamadas HTTP/SOAP al SII (sobre SOAP manual, sin zeep)
+
+# --- Representación impresa ---
+pdf417gen>=0.7.1     # código de barras PDF417 del timbre
+
+# --- Desarrollo / pruebas ---
+pytest>=8.0
+pdf417decoder>=1.0   # solo para verificar (escanear) el PDF417 en examples/

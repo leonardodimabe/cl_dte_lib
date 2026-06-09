@@ -1,0 +1,30 @@
+# --- SECRETOS: NUNCA subir ---
+*.pfx
+*.p12
+*.pem
+*.key
+**/CAF*.xml
+caf/
+certs/
+secrets/
+
+# --- Salidas generadas ---
+out/
+*.xml.signed
+dte_*.xml
+
+# --- Esquemas XSD del SII (no se versionan; ver schemas/README.md) ---
+schemas/*.xsd
+schemas/*/
+
+# --- Control de folios (estado local) ---
+*.lock
+
+# --- Python ---
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+build/
+dist/
