@@ -56,6 +56,7 @@ Boleta (39) y Guía de Despacho (52) quedan fuera del MVP.
 - ✅ **Libro de Compras y Ventas (IECV)**: `LibroCompraVenta` con resumen por tipo y detalle, firmado
 - ✅ **Validación contra XSD oficiales del SII**: DTE, EnvioDTE, RespuestaDTE, EnvioRecibos y LibroCV validan contra los esquemas oficiales (ver `schemas/README.md`)
 - ✅ **Consulta del RCV** (Registro de Compra y Venta): descarga compras/ventas reales del SII por TLS mutuo con el certificado (`rcv.py`) — útil para conciliar contra Odoo
+- ✅ **BHE recibidas** (Boletas de Honorarios Electrónicas): descarga del Informe Mensual de Boletas Recibidas del portal de honorarios del SII, con login por clave tributaria y paginación (`bhe.py`) — no existe vía de intercambio ni SOAP para esto, es scraping del CGI
 - ✅ Envío **DTEUpload** + consulta de estado (código listo; upload requiere postulación a certificación del emisor)
 
 ## Requisitos

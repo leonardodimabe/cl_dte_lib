@@ -25,3 +25,7 @@ class SiiUploadError(SiiError):
 
 class RcvError(SiiError):
     """Error consultando el Registro de Compra y Venta."""
+
+
+class BheError(SiiError):
+    """Error consultando las Boletas de Honorarios recibidas (portal web)."""

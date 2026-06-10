@@ -4,8 +4,9 @@ Paquete standalone, sin dependencia de Odoo, para generar, timbrar, firmar y
 enviar Documentos Tributarios Electrónicos.
 """
 
+from .bhe import BheClient, BheDocument
 from .document_types import DTEType
-from .errors import DteError, RcvError, SiiAuthError, SiiError, SiiUploadError
+from .errors import BheError, DteError, RcvError, SiiAuthError, SiiError, SiiUploadError
 from .folios import FolioError, FolioManager, FoliosExhausted
 from .models import DTE, Issuer, Item, Receiver, Reference
 from .rcv import RCVClient, RcvDocument, to_book_lines
@@ -27,11 +28,14 @@ __all__ = [
     "RCVClient",
     "RcvDocument",
     "to_book_lines",
+    "BheClient",
+    "BheDocument",
     "DteError",
     "SiiError",
     "SiiAuthError",
     "SiiUploadError",
     "RcvError",
+    "BheError",
 ]
 
 __version__ = "0.1.0"
