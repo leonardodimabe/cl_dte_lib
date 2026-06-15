@@ -31,16 +31,28 @@ def _report_html(rows: list[dict], total: int) -> str:
 
 
 _ROW_VIGENTE = {
-    "rutemisor": "12345678", "dvemisor": "5", "nombre_emisor": "JUAN PEREZ CONSULTOR",
-    "nroboleta": "1001", "fecha_boleta": "05/05/2026", "fechaanulacion": "",
-    "totalhonorarios": "1.000.000", "retencion_receptor": "152.500",
-    "honorariosliquidos": "847.500", "estado": "V",
+    "rutemisor": "12345678",
+    "dvemisor": "5",
+    "nombre_emisor": "JUAN PEREZ CONSULTOR",
+    "nroboleta": "1001",
+    "fecha_boleta": "05/05/2026",
+    "fechaanulacion": "",
+    "totalhonorarios": "1.000.000",
+    "retencion_receptor": "152.500",
+    "honorariosliquidos": "847.500",
+    "estado": "V",
 }
 _ROW_ANULADA = {
-    "rutemisor": "7654321", "dvemisor": "K", "nombre_emisor": "MARIA GONZALEZ",
-    "nroboleta": "2002", "fecha_boleta": "15/05/2026", "fechaanulacion": "20/05/2026",
-    "totalhonorarios": "500.000", "retencion_receptor": "76.250",
-    "honorariosliquidos": "423.750", "estado": "A",
+    "rutemisor": "7654321",
+    "dvemisor": "K",
+    "nombre_emisor": "MARIA GONZALEZ",
+    "nroboleta": "2002",
+    "fecha_boleta": "15/05/2026",
+    "fechaanulacion": "20/05/2026",
+    "totalhonorarios": "500.000",
+    "retencion_receptor": "76.250",
+    "honorariosliquidos": "423.750",
+    "estado": "A",
 }
 
 

@@ -37,9 +37,7 @@ logger = logging.getLogger(__name__)
 
 # Login por clave tributaria.
 _LOGIN_REF = "https://misiir.sii.cl/cgi_misii/siihome.cgi"
-_LOGIN_FORM = (
-    "https://zeusr.sii.cl/AUT2000/InicioAutenticacion/IngresoRutClave.html?" + _LOGIN_REF
-)
+_LOGIN_FORM = "https://zeusr.sii.cl/AUT2000/InicioAutenticacion/IngresoRutClave.html?" + _LOGIN_REF
 _LOGIN_POST = "https://zeusr.sii.cl/cgi_AUT2000/CAutInicio.cgi"
 
 # Portal de honorarios (Informe Mensual de Boletas Recibidas).
@@ -144,8 +142,7 @@ class BheClient:
 
         if not any(c.name.upper() == "TOKEN" for c in self.session.cookies):
             raise SiiAuthError(
-                f"El login al SII falló para {self.rut}. "
-                "Verifique el RUT y la clave tributaria."
+                f"El login al SII falló para {self.rut}. Verifique el RUT y la clave tributaria."
             )
         # 3) Sesión del portal de honorarios (setea NETSCAPE_LIVEWIRE.*).
         try:
@@ -213,7 +210,11 @@ class BheClient:
             raise BheError(f"Error de red consultando el informe BHE: {ex}") from ex
         logger.debug(
             "BHE %04d-%02d página %d -> HTTP %s len=%d",
-            year, month, page, resp.status_code, len(resp.text),
+            year,
+            month,
+            page,
+            resp.status_code,
+            len(resp.text),
         )
         return resp.text
 
