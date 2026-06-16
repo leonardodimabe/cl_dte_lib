@@ -22,6 +22,9 @@ class Certificate:
     private_key_pem: bytes
     cert_pem: bytes
     rut: str | None = None  # RUT del titular si se logra extraer del subject
+    # CA(s) intermedias del .pfx (PEM concatenados). Necesarias para que el SII
+    # pueda armar la cadena en el TLS mutuo del RCV (si faltan: alerta unknown_ca).
+    chain_pem: bytes = b""
 
     @classmethod
     def from_pfx(cls, path: str | Path, password: str) -> Certificate:
@@ -33,7 +36,7 @@ class Certificate:
 
         Útil en un servicio multi-cliente que guarda los .pfx cifrados en BD.
         """
-        key, cert, _ = pkcs12.load_key_and_certificates(data, password.encode("utf-8"))
+        key, cert, additional = pkcs12.load_key_and_certificates(data, password.encode("utf-8"))
         if key is None or cert is None:
             raise ValueError("El .pfx no contiene llave privada o certificado.")
 
@@ -43,9 +46,11 @@ class Certificate:
             encryption_algorithm=serialization.NoEncryption(),
         )
         cert_pem = cert.public_bytes(serialization.Encoding.PEM)
+        # Cadena de CA intermedias (si el .pfx las trae), para el TLS mutuo del SII.
+        chain_pem = b"".join(c.public_bytes(serialization.Encoding.PEM) for c in (additional or []))
 
         rut = _extract_rut(cert)
-        return cls(private_key_pem=key_pem, cert_pem=cert_pem, rut=rut)
+        return cls(private_key_pem=key_pem, cert_pem=cert_pem, rut=rut, chain_pem=chain_pem)
 
 
 # OID propietario usado por las CA chilenas para almacenar el RUT del titular

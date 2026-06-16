@@ -95,6 +95,10 @@ class _TempCert:
         with os.fdopen(fd, "wb") as f:
             f.write(cert.cert_pem)
             f.write(b"\n")
+            # CA(s) intermedias: sin ellas el SII no arma la cadena (unknown_ca).
+            if cert.chain_pem:
+                f.write(cert.chain_pem)
+                f.write(b"\n")
             f.write(cert.private_key_pem)
         return cls(path)
 
