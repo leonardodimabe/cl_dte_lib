@@ -98,6 +98,11 @@ def _header(doc: etree._Element, dte: DTE) -> None:
             _t(totals, "IVA", str(dte.vat))
     # ImptoReten va después del IVA y antes de MntTotal (orden del XSD).
     for retention in dte.retentions:
+        # Una retención de cero no retiene nada: declararla sería anunciar un
+        # impuesto que el documento no tiene. Pasa en la nota que anula, donde
+        # no hay IVA sobre el cual retener.
+        if not retention.amount_over(dte.vat):
+            continue
         node = etree.SubElement(totals, "ImptoReten")
         _t(node, "TipoImp", str(retention.code))
         if retention.rate is not None:

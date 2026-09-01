@@ -205,3 +205,49 @@ def test_no_imptoreten_block_when_there_is_no_retention():
     document = etree.Element("Documento")
     _header(document, _purchase(retentions=()))
     assert document.find("Encabezado/Totales/ImptoReten") is None
+
+
+def test_a_zero_retention_is_not_declared():
+    """La nota que anula no tiene IVA sobre el cual retener.
+
+    Emitir <ImptoReten> con MontoImp=0 anunciaría un impuesto que el documento
+    no tiene.
+    """
+    dte = DTE(
+        type=DTEType.DEBIT_NOTE,
+        folio=3,
+        issue_date=dt.date(2026, 9, 1),
+        issuer=_buyer(),
+        receiver=_supplier(),
+        items=[Item("ANULA NOTA DE CREDITO", quantity=1, unit_price=0)],
+        retentions=[Retention()],
+        references=[
+            Reference(
+                doc_type=61,
+                folio="2",
+                date=dt.date(2026, 9, 1),
+                code=ReferenceCode.CANCEL_DOCUMENT,
+                reason="ANULA NOTA DE CREDITO ELECTRONICA",
+            )
+        ],
+    )
+    doc = etree.Element("Documento")
+    _header(doc, dte)
+
+    assert doc.find("Encabezado/Totales/ImptoReten") is None
+
+
+def test_a_real_retention_is_still_declared():
+    dte = DTE(
+        type=DTEType.PURCHASE_INVOICE,
+        folio=1,
+        issue_date=dt.date(2026, 9, 1),
+        issuer=_buyer(),
+        receiver=_supplier(),
+        items=[Item("Producto 1", quantity=709, unit_price=5610)],
+        retentions=[Retention()],
+    )
+    doc = etree.Element("Documento")
+    _header(doc, dte)
+
+    assert doc.findtext("Encabezado/Totales/ImptoReten/MontoImp") == str(dte.vat)
