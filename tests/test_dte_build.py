@@ -360,3 +360,53 @@ def test_branch_is_omitted_when_not_informed():
     emisor = doc.find("Encabezado/Emisor")
     assert emisor.find("Sucursal") is None
     assert emisor.find("CdgSIISucur") is None
+
+
+# --------------------------------------------------------------------------- #
+#  Totales sin monto afecto
+# --------------------------------------------------------------------------- #
+def _note_totals(items):
+    dte = DTE(
+        type=DTEType.CREDIT_NOTE,
+        folio=7,
+        issue_date=dt.date(2026, 9, 1),
+        issuer=_issuer(),
+        receiver=_receiver(),
+        items=items,
+        references=[
+            Reference(
+                doc_type=34,
+                folio="1",
+                date=dt.date(2026, 9, 1),
+                code=ReferenceCode.CORRECT_AMOUNTS,
+                reason="MODIFICA MONTO",
+            )
+        ],
+    )
+    doc = etree.Element("Documento")
+    _header(doc, dte)
+    totals = doc.find("Encabezado/Totales")
+    return {etree.QName(node).localname: node.text for node in totals}
+
+
+def test_a_note_with_only_exempt_amounts_declares_no_vat_rate():
+    """Sin monto afecto no hay tasa que declarar: sería inventar un impuesto.
+
+    Es el caso de la nota de crédito que corrige una factura exenta, donde el
+    SII pide expresamente que no aparezca el IVA.
+    """
+    totals = _note_totals([Item("HORAS PROGRAMADOR", quantity=1, unit_price=920, exempt=True)])
+    assert totals == {"MntExe": "920", "MntTotal": "920"}
+
+
+def test_a_note_with_affected_amounts_still_declares_the_rate():
+    totals = _note_totals([Item("ITEM AFECTO", quantity=1, unit_price=1000)])
+    assert totals["MntNeto"] == "1000"
+    assert totals["TasaIVA"] == "19"
+    assert totals["IVA"] == "190"
+
+
+def test_a_zero_value_note_keeps_mntneto():
+    """Corrección de texto: no mueve montos, pero MntNeto=0 es lo esperable."""
+    totals = _note_totals([Item("CORRIGE GIRO", quantity=1, unit_price=0)])
+    assert totals == {"MntNeto": "0", "MntTotal": "0"}

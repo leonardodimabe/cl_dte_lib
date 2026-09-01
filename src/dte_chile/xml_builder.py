@@ -85,11 +85,17 @@ def _header(doc: etree._Element, dte: DTE) -> None:
     if dte.type.is_exempt:
         _t(totals, "MntExe", str(dte.exempt_amount))
     else:
-        _t(totals, "MntNeto", str(dte.net_amount))
+        # MntNeto, MntExe, TasaIVA e IVA son minOccurs=0: sólo MntTotal es
+        # obligatorio. Una nota que corrige una factura exenta no tiene monto
+        # afecto, así que declarar "tasa 19%, IVA 0" sería inventar un impuesto
+        # que no existe en el documento; el SII pide justamente lo contrario.
+        if dte.net_amount or not dte.exempt_amount:
+            _t(totals, "MntNeto", str(dte.net_amount))
         if dte.exempt_amount:
             _t(totals, "MntExe", str(dte.exempt_amount))
-        _t(totals, "TasaIVA", str(VAT_RATE))
-        _t(totals, "IVA", str(dte.vat))
+        if dte.net_amount:
+            _t(totals, "TasaIVA", str(VAT_RATE))
+            _t(totals, "IVA", str(dte.vat))
     # ImptoReten va después del IVA y antes de MntTotal (orden del XSD).
     for retention in dte.retentions:
         node = etree.SubElement(totals, "ImptoReten")
