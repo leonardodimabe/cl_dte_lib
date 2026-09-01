@@ -9,6 +9,7 @@ $map = @{
   "schema_iecv.zip"  = "iecv"     # LibroCV + Lce*
   "schema_ic.zip"    = "response" # RespuestaEnvioDTE
   "schema19983.zip"  = "receipts" # EnvioRecibos, Recibos (Ley 19.983)
+  "schema_lgd.zip"   = "lgd"      # LibroGuia (Libro de Guias de Despacho)
 }
 
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -26,9 +27,12 @@ foreach ($zip in $map.Keys) {
 Copy-Item (Join-Path $here "dte\SiiTypes_v10.xsd")       (Join-Path $here "response\") -Force
 Copy-Item (Join-Path $here "dte\xmldsignature_v10.xsd")  (Join-Path $here "response\") -Force
 
+# LibroGuia define sus propios tipos SiiDte, pero importa la firma XMLDSig.
+Copy-Item (Join-Path $here "dte\xmldsignature_v10.xsd")  (Join-Path $here "lgd\") -Force
+
 # Parche: libxml2 rechaza el decimal de 34 dígitos de LceSiiTypes.
 $lce = Join-Path $here "iecv\LceSiiTypes_v10.xsd"
 (Get-Content $lce -Raw) -replace '999999999999999999999999999999\.9999', '999999999999999999.9999' |
   Set-Content $lce -Encoding UTF8
 
-Write-Host "Esquemas listos en schemas/ (dte, iecv, response, receipts)."
+Write-Host "Esquemas listos en schemas/ (dte, iecv, response, receipts, lgd)."
