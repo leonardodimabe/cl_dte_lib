@@ -108,8 +108,16 @@ class SIIClient:
 
     # ----- 4) Envío del sobre -----
     UPLOAD_PATH = "/cgi_dte/UPL/DTEUpload"
-    # El SII rechaza el upload si no hay User-Agent.
-    _USER_AGENT = "Mozilla/4.0 (compatible; dte_chile 0.1; Windows)"
+    # El CGI de upload FILTRA por User-Agent: sólo procesa el formato que el SII
+    # documenta para sistemas propios. Con cualquier otro —incluido el de un
+    # navegador real— devuelve una página HTML de error genérica que no dice por
+    # qué, y el envío nunca llega a validarse. Verificado contra Maullín.
+    _USER_AGENT_TEMPLATE = "Mozilla/4.0 (compatible; PROG 1.0; Windows NT 5.0; {rut})"
+
+    @classmethod
+    def user_agent(cls, sender_rut: str) -> str:
+        """User-Agent en el formato que exige el SII, con el RUT de quien envía."""
+        return cls._USER_AGENT_TEMPLATE.format(rut=sender_rut)
 
     def send_dte(self, envelope_xml: bytes, issuer_rut: str, sender_rut: str) -> SubmissionResult:
         """Sube el sobre EnvioDTE al SII (DTEUpload) y devuelve el TrackID."""
@@ -132,7 +140,7 @@ class SIIClient:
             resp = self.session.post(
                 f"{self.environment.host}{self.UPLOAD_PATH}",
                 files=files,  # type: ignore[arg-type]  # tuplas multipart heterogéneas
-                headers={"User-Agent": self._USER_AGENT},
+                headers={"User-Agent": self.user_agent(sender_rut)},
                 cookies={"TOKEN": self._token},
                 timeout=self._timeout,
             )

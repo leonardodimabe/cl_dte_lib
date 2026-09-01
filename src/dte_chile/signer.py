@@ -28,11 +28,19 @@ from .certificate import Certificate
 
 NS_DTE = "http://www.sii.cl/SiiDte"
 NS_DSIG = "http://www.w3.org/2000/09/xmldsig#"
+NS_XSI = "http://www.w3.org/2001/XMLSchema-instance"
 
 
 def wrap_dte(document: etree._Element) -> etree._Element:
-    """Crea el nodo raíz <DTE> con el <Documento> dentro (aún sin firmar)."""
-    dte = etree.Element("{%s}DTE" % NS_DTE, nsmap={None: NS_DTE}, version="1.0")
+    """Crea el nodo raíz <DTE> con el <Documento> dentro (aún sin firmar).
+
+    Declara ``xmlns:xsi`` aunque el <DTE> no lo use: el sobre que lo va a
+    contener sí lo declara (por el ``xsi:schemaLocation`` que exige el SII), y
+    como la firma usa C14N **inclusiva**, los namespaces heredados entran en el
+    digest. Declarándolo ya acá, el contexto al firmar es idéntico al que habrá
+    dentro del sobre y la firma sigue validando.
+    """
+    dte = etree.Element("{%s}DTE" % NS_DTE, nsmap={None: NS_DTE, "xsi": NS_XSI}, version="1.0")
     dte.append(document)
     return dte
 
