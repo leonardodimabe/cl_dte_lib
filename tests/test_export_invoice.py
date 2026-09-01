@@ -393,3 +393,54 @@ def test_unknown_name_fails_loudly_with_suggestions():
 
     with pytest.raises(KeyError, match="Quisiste decir"):
         code_for(COUNTRIES, "ALEMAN")
+
+
+# --------------------------------------------------------------------------- #
+#  Receptor extranjero
+# --------------------------------------------------------------------------- #
+def test_foreign_receiver_carries_nationality(cert, caf_factory):
+    """Un servicio prestado a un extranjero declara su nacionalidad (código país)."""
+    doc = _document(
+        [ExportItem("ASESORIAS", amount=14)],
+        receiver_nationality=563,
+        foreign_id="DE-99887766",
+    )
+    root = build_export(doc, caf_factory(110), TS)
+
+    foreign = root.find(".//Receptor/Extranjero")
+    assert foreign.findtext("NumId") == "DE-99887766"
+    assert foreign.findtext("Nacionalidad") == "563"
+
+
+def test_the_foreign_block_is_omitted_when_there_is_nothing_to_declare(cert, caf_factory):
+    doc = _document([ExportItem("ASESORIAS", amount=14)])
+    root = build_export(doc, caf_factory(110), TS)
+    assert root.find(".//Receptor/Extranjero") is None
+
+
+def test_nationality_goes_before_the_activity(cert, caf_factory):
+    """Orden del XSD: RznSocRecep, Extranjero, GiroRecep."""
+    doc = _document([ExportItem("ASESORIAS", amount=14)], receiver_nationality=563)
+    receiver = build_export(doc, caf_factory(110), TS).find(".//Receptor")
+
+    tags = [node.tag for node in receiver]
+    assert tags.index("Extranjero") < tags.index("GiroRecep")
+
+
+def test_a_line_that_states_its_amount_still_applies_its_surcharge():
+    """El caso 5038177-1: valor de línea 14 con 10% de comisión al exterior.
+
+    ``amount`` sustituye a cantidad × precio como base, no al monto final: si
+    se declara RecargoPct, el MontoItem tiene que incluirlo.
+    """
+    item = ExportItem("ASESORIAS Y PROYECTOS PROFESIONALES", amount=14, surcharge_pct=10)
+    assert item.line_amount == Decimal("15.4")
+
+
+def test_a_line_that_states_its_amount_still_applies_its_discount():
+    item = ExportItem("SERVICIO", amount=100, discount_pct=5)
+    assert item.line_amount == Decimal("95")
+
+
+def test_a_line_amount_without_percentages_is_left_alone():
+    assert ExportItem("SERVICIO", amount=42).line_amount == Decimal("42")

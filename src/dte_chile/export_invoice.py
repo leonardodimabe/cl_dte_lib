@@ -87,9 +87,13 @@ class ExportItem:
 
     @property
     def line_amount(self) -> Decimal:
-        """MontoItem: bruto con su descuento o recargo de línea aplicado."""
-        if self.amount is not None:
-            return _amount(self.amount)
+        """MontoItem: bruto con su descuento o recargo de línea aplicado.
+
+        ``amount`` reemplaza a cantidad × precio como **base**, no al monto
+        final: una línea que informa su valor y además un recargo debe salir
+        con el recargo dentro. Declarar ``RecargoPct`` y no sumarlo dejaba el
+        MontoItem contradiciendo su propio porcentaje.
+        """
         total = self.gross_amount
         if self.discount_pct:
             total -= total * self.discount_pct / 100
@@ -166,6 +170,9 @@ class ExportDocument:
     customs: Customs | None = None
     payment_mode: int | None = None  # FmaPagExp
     service_indicator: int | None = None  # IndServicio
+    # <Extranjero>: identificación del comprador de fuera de Chile.
+    foreign_id: str = ""  # NumId (pasaporte, tax id del país, etc.)
+    receiver_nationality: int | None = None  # Nacionalidad: código de país de Aduana
 
     def __post_init__(self) -> None:
         if self.type not in EXPORT_TYPES:
@@ -291,6 +298,14 @@ def _header(root: etree._Element, doc: ExportDocument) -> None:
     receiver = etree.SubElement(header, "Receptor")
     _t(receiver, "RUTRecep", doc.receiver.rut.value)
     _t(receiver, "RznSocRecep", doc.receiver.business_name[:100])
+    # <Extranjero> identifica al comprador de fuera de Chile. La nacionalidad es
+    # el código de país de Aduana y va antes del giro (orden del XSD).
+    if doc.foreign_id or doc.receiver_nationality is not None:
+        foreign = etree.SubElement(receiver, "Extranjero")
+        if doc.foreign_id:
+            _t(foreign, "NumId", doc.foreign_id[:20])
+        if doc.receiver_nationality is not None:
+            _t(foreign, "Nacionalidad", str(doc.receiver_nationality))
     if doc.receiver.activity:
         _t(receiver, "GiroRecep", doc.receiver.activity[:40])
     _t(receiver, "DirRecep", doc.receiver.address[:70])
