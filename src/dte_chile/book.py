@@ -82,6 +82,9 @@ class BookLine:
     non_recoverable_vat: list[NonRecoverableVat] = field(default_factory=list)
     # IVA retenido por el comprador (factura de compra con cambio de sujeto).
     retained_total_vat: int = 0
+    # Monto no facturable del período (LV): p.ej. depósitos por envase. Entra en
+    # MntPeriodo, que es lo que el libro de ventas cuadra.
+    non_billable_amount: int = 0
 
     @property
     def has_recoverable_vat(self) -> bool:
@@ -129,7 +132,7 @@ def build_book(cover: BookCover, cert: Certificate, timestamp: _dt.datetime) -> 
     _cover(book, cover)
     _summary(book, cover)
     for line in cover.lines:
-        _detail(book, line)
+        _detail(book, line, cover.operation_type)
     _t(book, "TmstFirma", _ts(timestamp))
 
     return signer.sign_enveloped(root, book, cert)
@@ -172,16 +175,29 @@ def _summary(book: etree._Element, cover: BookCover) -> None:
         _t(totals, "TotMntExe", str(sum(ln.exempt_amount for ln in group)))
         _t(totals, "TotMntNeto", str(sum(ln.net_amount for ln in group)))
 
-        recoverable = sum(1 for ln in group if ln.has_recoverable_vat)
-        if recoverable:
-            _t(totals, "TotOpIVARec", str(recoverable))
+        # El XSD anota cada total con el libro al que pertenece: TotOpIVARec,
+        # el IVA no recuperable y el de uso común son (LC), y el IVA retenido
+        # es (LV). Cruzarlos deja el libro descuadrado para el SII.
+        compra = cover.operation_type == "COMPRA"
+        if compra:
+            recoverable = sum(1 for ln in group if ln.has_recoverable_vat)
+            if recoverable:
+                _t(totals, "TotOpIVARec", str(recoverable))
         _t(totals, "TotMntIVA", str(sum(ln.vat_amount for ln in group)))
 
-        _non_recoverable_totals(totals, group)
-        _common_use_totals(totals, group, cover.proportionality_factor)
-        _retained_totals(totals, group)
+        if compra:
+            _non_recoverable_totals(totals, group)
+            _common_use_totals(totals, group, cover.proportionality_factor)
+        else:
+            _retained_totals(totals, group)
 
-        _t(totals, "TotMntTotal", str(sum(ln.total_amount for ln in group)))
+        total = sum(ln.total_amount for ln in group)
+        _t(totals, "TotMntTotal", str(total))
+        if not compra:
+            non_billable = sum(ln.non_billable_amount for ln in group)
+            if non_billable:
+                _t(totals, "TotMntNoFact", str(non_billable))
+            _t(totals, "TotMntPeriodo", str(total + non_billable))
 
 
 def _non_recoverable_totals(totals: etree._Element, group: list[BookLine]) -> None:
@@ -218,7 +234,7 @@ def _retained_totals(totals: etree._Element, group: list[BookLine]) -> None:
     _t(totals, "TotIVARetTotal", str(sum(ln.retained_total_vat for ln in retained)))
 
 
-def _detail(book: etree._Element, line: BookLine) -> None:
+def _detail(book: etree._Element, line: BookLine, operation_type: str = "VENTA") -> None:
     # Orden según LibroCV_v10.xsd: TpoDoc, NroDoc, Anulado?, TasaImp?, FchDoc,
     # CdgSIISucur?, RUTDoc, RznSoc?, ... montos ..., MntTotal.
     detail = etree.SubElement(book, "{%s}Detalle" % NS)
@@ -240,15 +256,24 @@ def _detail(book: etree._Element, line: BookLine) -> None:
         _t(detail, "MntIVA", str(line.vat_amount))
     # Orden del XSD: ... MntIVA, MntActivoFijo?, MntIVAActivoFijo?, IVANoRec*,
     # IVAUsoComun?, ..., IVARetTotal?, ..., MntTotal.
-    for entry in line.non_recoverable_vat:
-        node = etree.SubElement(detail, "{%s}IVANoRec" % NS)
-        _t(node, "CodIVANoRec", str(entry.code))
-        _t(node, "MntIVANoRec", str(entry.amount))
-    if line.common_use_vat:
-        _t(detail, "IVAUsoComun", str(line.common_use_vat))
-    if line.retained_total_vat:
+    # Mismo criterio que en el resumen: IVANoRec e IVAUsoComun son campos del
+    # libro de compras; IVARetTotal, del de ventas.
+    if operation_type == "COMPRA":
+        for entry in line.non_recoverable_vat:
+            node = etree.SubElement(detail, "{%s}IVANoRec" % NS)
+            _t(node, "CodIVANoRec", str(entry.code))
+            _t(node, "MntIVANoRec", str(entry.amount))
+        if line.common_use_vat:
+            _t(detail, "IVAUsoComun", str(line.common_use_vat))
+    elif line.retained_total_vat:
         _t(detail, "IVARetTotal", str(line.retained_total_vat))
     _t(detail, "MntTotal", str(line.total_amount))
+    # MntNoFact y MntPeriodo son (LV): el libro de ventas cuadra por el monto
+    # del período, no por el total, así que se emiten siempre en ese libro.
+    if operation_type == "VENTA":
+        if line.non_billable_amount:
+            _t(detail, "MntNoFact", str(line.non_billable_amount))
+        _t(detail, "MntPeriodo", str(line.total_amount + line.non_billable_amount))
 
 
 # --------------------------------------------------------------------------- #

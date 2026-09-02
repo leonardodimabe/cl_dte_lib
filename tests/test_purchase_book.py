@@ -95,7 +95,8 @@ def _set_5038172_lines():
             non_recoverable_vat=[NonRecoverableVat(NON_RECOVERABLE_FREE_DELIVERY, _vat(11305))],
             total_amount=11305 + _vat(11305),
         ),
-        # Factura de compra con retención total del IVA.
+        # Factura de compra: el comprador retiene todo el IVA, y a la vez tiene
+        # derecho al crédito, así que en SU libro de compras el IVA va normal.
         BookLine(
             46,
             9,
@@ -103,8 +104,8 @@ def _set_5038172_lines():
             "17099910-K",
             "Proveedor E",
             net_amount=10215,
-            retained_total_vat=_vat(10215),
-            total_amount=10215,
+            vat_amount=_vat(10215),
+            total_amount=10215 + _vat(10215),
         ),
         # Nota de crédito por descuento a la factura electrónica 32.
         BookLine(
@@ -195,14 +196,19 @@ def test_non_recoverable_totals_group_by_reason(cert):
 # --------------------------------------------------------------------------- #
 #  IVA retenido total
 # --------------------------------------------------------------------------- #
-def test_purchase_invoice_declares_retained_vat(cert):
+def test_the_purchase_book_does_not_use_the_sales_retention_fields(cert):
+    """IVARetTotal está anotado (LV) en el XSD: es del libro de ventas.
+
+    Emitirlo en el de compras deja el libro descuadrado —el SII responde
+    LRH— porque el monto no cierra con ningún total que ese libro declare.
+    """
     book = _build(cert)
     detail = [d for d in book.iter(f"{NS}Detalle") if d.findtext(f"{NS}NroDoc") == "9"][0]
-    assert detail.findtext(f"{NS}IVARetTotal") == str(_vat(10215))
+    assert detail.find(f"{NS}IVARetTotal") is None
+    assert detail.findtext(f"{NS}MntIVA") == str(_vat(10215))
 
     totals = _totals_for(book, 46)
-    assert totals.findtext(f"{NS}TotOpIVARetTotal") == "1"
-    assert totals.findtext(f"{NS}TotIVARetTotal") == str(_vat(10215))
+    assert totals.find(f"{NS}TotIVARetTotal") is None
 
 
 # --------------------------------------------------------------------------- #
@@ -262,13 +268,16 @@ def test_sales_book_is_unaffected(cert):
     )
     book = build_book(cover, cert, TS)
     totals = _totals_for(book, 33)
+    # TotOpIVARec está anotado (LC): no corresponde a un libro de ventas.
+    # TotMntPeriodo sí es (LV) y es por donde el SII cuadra el libro.
     assert [etree.QName(c).localname for c in totals] == [
         "TpoDoc",
         "TotDoc",
         "TotMntExe",
         "TotMntNeto",
-        "TotOpIVARec",
         "TotMntIVA",
         "TotMntTotal",
+        "TotMntPeriodo",
     ]
+    assert totals.findtext(f"{NS}TotMntPeriodo") == "119000"
     Validator(SCHEMAS).validate(serialize(book))
