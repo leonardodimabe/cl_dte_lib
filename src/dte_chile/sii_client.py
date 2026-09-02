@@ -173,7 +173,14 @@ class SIIClient:
         response = self._soap_call(
             self.QUERY_SVC,
             "getEstUp",
-            {"Rut": issuer_body, "Dv": issuer_dv, "TrackId": str(track_id), "Token": self._token},
+            # Los nombres salen del WSDL (QueryEstUp.jws?WSDL): el servicio es
+            # Axis RPC y liga los parámetros por nombre, no por posición.
+            {
+                "RutCompania": issuer_body,
+                "DvCompania": issuer_dv,
+                "TrackId": str(track_id),
+                "Token": self._token,
+            },
         )
         status, _ = _parse_response(response, "ESTADO")
         label_node = etree.fromstring(
