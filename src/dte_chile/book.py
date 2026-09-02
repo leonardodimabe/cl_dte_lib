@@ -85,6 +85,12 @@ class BookLine:
     # Monto no facturable del período (LV): p.ej. depósitos por envase. Entra en
     # MntPeriodo, que es lo que el libro de ventas cuadra.
     non_billable_amount: int = 0
+    # Comisiones de la liquidación factura (LV). Se **restan** del total, así
+    # que sin ellas la línea de un tipo 43 no cierra: exento + neto + IVA no da
+    # el MntTotal que el propio documento declara.
+    commission_net: int = 0
+    commission_exempt: int = 0
+    commission_vat: int = 0
 
     @property
     def has_recoverable_vat(self) -> bool:
@@ -191,6 +197,8 @@ def _summary(book: etree._Element, cover: BookCover) -> None:
         else:
             _retained_totals(totals, group)
 
+        if not compra:
+            _commission_totals(totals, group)
         total = sum(ln.total_amount for ln in group)
         _t(totals, "TotMntTotal", str(total))
         if not compra:
@@ -234,6 +242,19 @@ def _retained_totals(totals: etree._Element, group: list[BookLine]) -> None:
     _t(totals, "TotIVARetTotal", str(sum(ln.retained_total_vat for ln in retained)))
 
 
+def _commission_totals(totals: etree._Element, group: list[BookLine]) -> None:
+    """<TotValCom*>: comisiones de las liquidaciones factura del grupo."""
+    net = sum(ln.commission_net for ln in group)
+    exempt = sum(ln.commission_exempt for ln in group)
+    vat = sum(ln.commission_vat for ln in group)
+    if not (net or exempt or vat):
+        return
+    node = etree.SubElement(totals, "{%s}TotLiquidaciones" % NS)
+    _t(node, "TotValComNeto", str(net))
+    _t(node, "TotValComExe", str(exempt))
+    _t(node, "TotValComIVA", str(vat))
+
+
 def _detail(book: etree._Element, line: BookLine, operation_type: str = "VENTA") -> None:
     # Orden según LibroCV_v10.xsd: TpoDoc, NroDoc, Anulado?, TasaImp?, FchDoc,
     # CdgSIISucur?, RUTDoc, RznSoc?, ... montos ..., MntTotal.
@@ -267,6 +288,16 @@ def _detail(book: etree._Element, line: BookLine, operation_type: str = "VENTA")
             _t(detail, "IVAUsoComun", str(line.common_use_vat))
     elif line.retained_total_vat:
         _t(detail, "IVARetTotal", str(line.retained_total_vat))
+    if operation_type == "VENTA" and (
+        line.commission_net or line.commission_exempt or line.commission_vat
+    ):
+        # Las comisiones no cuelgan del <Detalle>: van dentro de <Liquidaciones>,
+        # que además identifica al mandante por cuya cuenta se vendió.
+        node = etree.SubElement(detail, "{%s}Liquidaciones" % NS)
+        _t(node, "RutEmisor", line.rut)
+        _t(node, "ValComNeto", str(line.commission_net))
+        _t(node, "ValComExe", str(line.commission_exempt))
+        _t(node, "ValComIVA", str(line.commission_vat))
     _t(detail, "MntTotal", str(line.total_amount))
     # MntNoFact y MntPeriodo son (LV): el libro de ventas cuadra por el monto
     # del período, no por el total, así que se emiten siempre en ese libro.
