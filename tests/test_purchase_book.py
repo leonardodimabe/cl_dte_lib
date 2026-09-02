@@ -153,7 +153,8 @@ def test_common_use_vat_is_not_counted_as_recoverable(cert):
     book = _build(cert)
     detail = [d for d in book.iter(f"{NS}Detalle") if d.findtext(f"{NS}NroDoc") == "781"][0]
     assert detail.findtext(f"{NS}IVAUsoComun") == str(_vat(30019))
-    assert detail.find(f"{NS}MntIVA") is None
+    # MntIVA se declara siempre, pero en cero: el IVA no está ahí.
+    assert detail.findtext(f"{NS}MntIVA") == "0"
 
 
 def test_proportionality_factor_drives_the_credit(cert):
@@ -281,3 +282,89 @@ def test_sales_book_is_unaffected(cert):
     ]
     assert totals.findtext(f"{NS}TotMntPeriodo") == "119000"
     Validator(SCHEMAS).validate(serialize(book))
+
+
+# --------------------------------------------------------------------------- #
+#  Notas de crédito y débito en el libro de ventas
+# --------------------------------------------------------------------------- #
+def test_a_note_declares_the_document_it_modifies(cert):
+    """Sin TpoDocRef/FolioDocRef el SII no puede atar la nota a su factura."""
+    lines = [
+        BookLine(
+            61,
+            25,
+            PERIOD_DATE,
+            "60803000-K",
+            "Cliente",
+            net_amount=1000,
+            vat_amount=190,
+            total_amount=1190,
+            ref_doc_type=33,
+            ref_folio=19,
+        )
+    ]
+    cover = BookCover(
+        issuer_rut="77262159-0",
+        sender_rut="12291733-9",
+        period="2026-09",
+        operation_type="VENTA",
+        lines=lines,
+    )
+    detail = build_book(cover, cert, TS).find(f".//{NS}Detalle")
+
+    assert detail.findtext(f"{NS}TpoDocRef") == "33"
+    assert detail.findtext(f"{NS}FolioDocRef") == "19"
+    # Orden del XSD: la referencia va después de la razón social y antes de los montos.
+    tags = [etree.QName(c).localname for c in detail]
+    assert tags.index("TpoDocRef") < tags.index("MntExe")
+
+
+def test_the_reference_is_not_emitted_in_a_purchase_book(cert):
+    """TpoDocRef está anotado (LV): es del libro de ventas."""
+    lines = [
+        BookLine(
+            60,
+            451,
+            PERIOD_DATE,
+            "76158145-7",
+            "Proveedor",
+            net_amount=1000,
+            vat_amount=190,
+            total_amount=1190,
+            ref_doc_type=30,
+            ref_folio=234,
+        )
+    ]
+    cover = BookCover(
+        issuer_rut="77262159-0",
+        sender_rut="12291733-9",
+        period="2026-09",
+        operation_type="COMPRA",
+        lines=lines,
+    )
+    detail = build_book(cover, cert, TS).find(f".//{NS}Detalle")
+    assert detail.find(f"{NS}TpoDocRef") is None
+
+
+def test_a_zero_value_document_still_declares_its_three_amounts(cert):
+    """Una nota que corrige texto no mueve montos, pero los declara en cero.
+
+    Una línea con sólo MntTotal=0 deja al Servicio sin los sumandos con que
+    cuadra el libro.
+    """
+    lines = [
+        BookLine(61, 25, PERIOD_DATE, "60803000-K", "Cliente", ref_doc_type=33, ref_folio=19)
+    ]
+    cover = BookCover(
+        issuer_rut="77262159-0",
+        sender_rut="12291733-9",
+        period="2026-09",
+        operation_type="VENTA",
+        lines=lines,
+    )
+    detail = build_book(cover, cert, TS).find(f".//{NS}Detalle")
+
+    assert detail.findtext(f"{NS}MntExe") == "0"
+    assert detail.findtext(f"{NS}MntNeto") == "0"
+    assert detail.findtext(f"{NS}MntIVA") == "0"
+    assert detail.findtext(f"{NS}MntTotal") == "0"

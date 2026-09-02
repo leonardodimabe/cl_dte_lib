@@ -85,6 +85,10 @@ class BookLine:
     # Monto no facturable del período (LV): p.ej. depósitos por envase. Entra en
     # MntPeriodo, que es lo que el libro de ventas cuadra.
     non_billable_amount: int = 0
+    # Documento que una nota de crédito o débito modifica (LV). Sin esto el
+    # Servicio no puede atar la nota a su factura y el libro no le cuadra.
+    ref_doc_type: int | None = None
+    ref_folio: int | None = None
     # Comisiones de la liquidación factura (LV). Se **restan** del total, así
     # que sin ellas la línea de un tipo 43 no cierra: exento + neto + IVA no da
     # el MntTotal que el propio documento declara.
@@ -269,12 +273,18 @@ def _detail(book: etree._Element, line: BookLine, operation_type: str = "VENTA")
     _t(detail, "RUTDoc", line.rut)
     if line.business_name:
         _t(detail, "RznSoc", line.business_name[:50])
-    if line.exempt_amount:
-        _t(detail, "MntExe", str(line.exempt_amount))
-    if line.net_amount:
-        _t(detail, "MntNeto", str(line.net_amount))
-    if line.vat_amount:
-        _t(detail, "MntIVA", str(line.vat_amount))
+    # Orden del XSD: RznSoc, Extranjero?, TpoDocRef?, FolioDocRef?, MntExe...
+    if operation_type == "VENTA" and line.ref_doc_type is not None:
+        _t(detail, "TpoDocRef", str(line.ref_doc_type))
+        if line.ref_folio is not None:
+            _t(detail, "FolioDocRef", str(line.ref_folio))
+    # Los tres montos se declaran siempre, aunque sean cero. El resumen ya
+    # emite sus tres totales sin excepción, y una línea que sólo trae
+    # MntTotal=0 —el caso de una nota que corrige texto sin mover montos— deja
+    # al Servicio sin los sumandos con que cuadra el libro.
+    _t(detail, "MntExe", str(line.exempt_amount))
+    _t(detail, "MntNeto", str(line.net_amount))
+    _t(detail, "MntIVA", str(line.vat_amount))
     # Orden del XSD: ... MntIVA, MntActivoFijo?, MntIVAActivoFijo?, IVANoRec*,
     # IVAUsoComun?, ..., IVARetTotal?, ..., MntTotal.
     # Mismo criterio que en el resumen: IVANoRec e IVAUsoComun son campos del
