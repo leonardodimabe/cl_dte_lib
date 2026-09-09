@@ -15,7 +15,7 @@ Ambientes:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 import requests
@@ -43,10 +43,45 @@ class Environment(StrEnum):
 
 
 @dataclass
+class DocTypeStats:
+    """Cuántos documentos de un tipo aceptó, rechazó o reparó el SII.
+
+    Sale del bloque ``ESTADISTICA`` que devuelve ``QueryEstUp``. Es el dato que
+    de verdad dice cómo fue el envío: el ESTADO del sobre puede ser ``EPR``
+    —«envío procesado»— con todos sus documentos rechazados dentro, porque una
+    cosa es que el sobre se haya podido leer y otra que su contenido valga.
+    """
+
+    doc_type: int
+    informed: int = 0
+    accepted: int = 0
+    rejected: int = 0
+    flagged: int = 0
+
+
+@dataclass
 class SubmissionResult:
     track_id: str | None
     status: str
     detail: str = ""
+    #: Desglose por tipo de documento. Vacío en libros, que no lo llevan.
+    stats: list[DocTypeStats] = field(default_factory=list)
+
+    @property
+    def accepted(self) -> int:
+        return sum(s.accepted for s in self.stats)
+
+    @property
+    def rejected(self) -> int:
+        return sum(s.rejected for s in self.stats)
+
+    @property
+    def flagged(self) -> int:
+        return sum(s.flagged for s in self.stats)
+
+    @property
+    def informed(self) -> int:
+        return sum(s.informed for s in self.stats)
 
 
 class SIIClient:
@@ -183,11 +218,55 @@ class SIIClient:
             },
         )
         status, _ = _parse_response(response, "ESTADO")
-        label_node = etree.fromstring(
+        tree = etree.fromstring(
             response.encode("utf-8") if isinstance(response, str) else response
-        ).find(".//{*}GLOSA")
+        )
+        label_node = tree.find(".//{*}GLOSA")
         label = label_node.text if label_node is not None else ""
-        return SubmissionResult(track_id=track_id, status=status or "?", detail=label or response)
+        return SubmissionResult(
+            track_id=track_id,
+            status=status or "?",
+            detail=label or response,
+            stats=_parse_stats(tree),
+        )
+
+
+def _parse_stats(tree) -> list[DocTypeStats]:
+    """Lee el desglose por tipo de documento de la respuesta de QueryEstUp.
+
+    El SII lo devuelve **plano**: dentro de ``RESP_BODY`` van TIPO_DOCTO,
+    INFORMADOS, ACEPTADOS, RECHAZADOS y REPAROS repetidos uno tras otro, sin
+    ningún elemento que agrupe cada tanda. Su documentación describe un
+    ``ESTADISTICA`` que envuelve cada grupo; la respuesta real de Maullín no lo
+    trae. Se recorre en orden de documento y cada TIPO_DOCTO abre un grupo
+    nuevo, lo que sirve para las dos formas.
+    """
+    CAMPOS = {
+        "INFORMADOS": "informed",
+        "ACEPTADOS": "accepted",
+        "RECHAZADOS": "rejected",
+        "REPAROS": "flagged",
+    }
+
+    def entero(texto: str | None) -> int:
+        try:
+            return int((texto or "").strip())
+        except ValueError:
+            return 0
+
+    salida: list[DocTypeStats] = []
+    actual: DocTypeStats | None = None
+    for nodo in tree.iter():
+        etiqueta = str(nodo.tag).rsplit("}", 1)[-1]
+        if etiqueta == "TIPO_DOCTO":
+            tipo = entero(nodo.text)
+            if not tipo:
+                continue
+            actual = DocTypeStats(doc_type=tipo)
+            salida.append(actual)
+        elif actual is not None and etiqueta in CAMPOS:
+            setattr(actual, CAMPOS[etiqueta], entero(nodo.text))
+    return salida
 
 
 def _build_soap_envelope(operation: str, params: dict) -> bytes:
