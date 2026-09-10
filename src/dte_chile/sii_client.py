@@ -218,9 +218,7 @@ class SIIClient:
             },
         )
         status, _ = _parse_response(response, "ESTADO")
-        tree = etree.fromstring(
-            response.encode("utf-8") if isinstance(response, str) else response
-        )
+        tree = etree.fromstring(response.encode("utf-8") if isinstance(response, str) else response)
         label_node = tree.find(".//{*}GLOSA")
         label = label_node.text if label_node is not None else ""
         return SubmissionResult(

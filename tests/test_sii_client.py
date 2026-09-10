@@ -1,5 +1,3 @@
-
-
 def test_lee_el_desglose_por_tipo_de_documento():
     """Respuesta REAL de Maullín, copiada tal cual de una consulta.
 
