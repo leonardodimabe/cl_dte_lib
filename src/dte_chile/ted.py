@@ -13,6 +13,17 @@ El TED es el "sello" que prueba que el folio fue autorizado. Estructura:
     </TED>
 
 La firma (FRMT) se hace con la **llave privada del CAF**, NO con el certificado.
+
+El DD se firma **plano**: sin espacios, tabulaciones ni saltos de línea entre
+etiquetas, y en ISO-8859-1. Es la forma del ejemplo de referencia del
+instructivo del SII (RUT 97975000-5, folio 27), cuyo FRMT valida sólo sobre el
+DD plano. El CAF llega del SII con saltos de línea entre sus etiquetas; si se
+incrusta así, el DD firmado lleva esos saltos y el Servicio rechaza el
+documento. Pasó: una certificación entera —32 documentos de diez tipos— volvió
+rechazada mientras los libros, que no llevan timbre, salían aceptados.
+
+Aplanar no altera el CAF: sólo quita el espacio en blanco ENTRE etiquetas, no
+el contenido de ninguna. El propio ejemplo del SII lo incrusta así.
 """
 
 from __future__ import annotations
@@ -47,8 +58,9 @@ def build_ted(dte: DTE, caf: CAF, timestamp: _dt.datetime) -> etree._Element:
     _text(dd, "MNT", str(dte.total_amount))
     _text(dd, "IT1", dte.items[0].name[:40])
 
-    # El bloque CAF va incrustado literalmente dentro del DD.
-    dd.append(_clone(caf.caf_element))
+    # El CAF va incrustado dentro del DD, PLANO: el archivo del SII trae saltos
+    # de línea entre etiquetas y el DD se firma sin ellos.
+    dd.append(_flatten(_clone(caf.caf_element)))
 
     _text(dd, "TSTED", timestamp.replace(microsecond=0).isoformat())
 
@@ -60,15 +72,27 @@ def build_ted(dte: DTE, caf: CAF, timestamp: _dt.datetime) -> etree._Element:
     return ted
 
 
+def dd_bytes(dd: etree._Element) -> bytes:
+    """Los bytes exactos que se firman: el DD plano, en ISO-8859-1, sin
+    declaración XML.
+
+    ISO-8859-1 y no ASCII: ``etree.tostring`` por defecto escribe una «Ñ» como
+    ``&#209;``, pero el documento se serializa en ISO-8859-1 y ahí la «Ñ» es el
+    byte 0xD1. Firmar una forma y enviar la otra invalida el timbre de cualquier
+    documento con una razón social o un ítem acentuado.
+    """
+    return etree.tostring(dd, encoding="ISO-8859-1", xml_declaration=False)
+
+
 def _sign_dd(dd: etree._Element, rsa_private_key_pem: str) -> str:
     """Firma el <DD> serializado con RSA-SHA1, devuelve la firma en base64."""
-    dd_bytes = etree.tostring(dd)
+    datos = dd_bytes(dd)
     private_key = serialization.load_pem_private_key(
         rsa_private_key_pem.encode("latin-1"), password=None
     )
     if not isinstance(private_key, rsa.RSAPrivateKey):
         raise ValueError("La llave del CAF (RSASK) no es RSA.")
-    signature = private_key.sign(dd_bytes, padding.PKCS1v15(), hashes.SHA1())
+    signature = private_key.sign(datos, padding.PKCS1v15(), hashes.SHA1())
     return base64.b64encode(signature).decode("ascii")
 
 
@@ -80,3 +104,17 @@ def _text(parent: etree._Element, tag: str, value: str) -> etree._Element:
 
 def _clone(node: etree._Element) -> etree._Element:
     return etree.fromstring(etree.tostring(node))
+
+
+def _flatten(node: etree._Element) -> etree._Element:
+    """Quita el espacio en blanco ENTRE etiquetas, sin tocar el contenido.
+
+    Sólo se vacían textos y colas que son puro espacio en blanco: el valor de
+    una etiqueta —un RUT, una clave en base64— nunca lo es, así que no cambia.
+    """
+    for el in node.iter():
+        if el.text is not None and not el.text.strip():
+            el.text = None
+        if el.tail is not None and not el.tail.strip():
+            el.tail = None
+    return node

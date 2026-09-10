@@ -28,11 +28,6 @@ class CAF:
     def contains(self, folio: int) -> bool:
         return self.folio_from <= folio <= self.folio_to
 
-    @property
-    def caf_xml_bytes(self) -> bytes:
-        """Serializa el nodo <CAF> tal como debe ir dentro del TED."""
-        return etree.tostring(self.caf_element)
-
 
 def load_caf(path: str | Path) -> CAF:
     """Carga y parsea un archivo CAF desde disco."""
