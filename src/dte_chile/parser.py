@@ -33,6 +33,7 @@ from .models import (
     Retention,
     Transport,
 )
+from .rut import Rut
 
 # IndExeDR → ámbito del descuento/recargo global.
 _SCOPE_BY_INDICATOR = {None: "afecto", "1": "exento", "2": "no_afecto"}
@@ -74,14 +75,14 @@ def parse_document(document: etree._Element) -> DTE:
     id_doc = _child(header, "IdDoc", required=True)
     totals = _child(header, "Totales", required=True)
 
-    doc_type = DTEType(int(_text(id_doc, "TipoDTE")))
+    doc_type = DTEType(int(_required(id_doc, "TipoDTE")))
     # En la boleta los precios van con IVA incluido salvo que se declare
     # IndMntNeto=2; sin recuperar ese matiz, los totales al releer no cuadran.
     prices_include_vat = doc_type.is_receipt and _text(id_doc, "IndMntNeto") is None
 
     dte = DTE(
         type=doc_type,
-        folio=int(_text(id_doc, "Folio")),
+        folio=int(_required(id_doc, "Folio")),
         issue_date=_date(_text(id_doc, "FchEmis")),
         issuer=_issuer(_child(header, "Emisor", required=True)),
         receiver=_receiver(_child(header, "Receptor", required=True)),
@@ -111,21 +112,21 @@ def parse_document(document: etree._Element) -> DTE:
 def _issuer(node: etree._Element) -> Issuer:
     # La boleta nombra distinto los mismos campos: RznSocEmisor/GiroEmisor.
     return Issuer(
-        rut=_text(node, "RUTEmisor") or "",
+        rut=Rut(_text(node, "RUTEmisor") or ""),
         business_name=_text(node, "RznSoc") or _text(node, "RznSocEmisor") or "",
         activity=_text(node, "GiroEmis") or _text(node, "GiroEmisor") or "",
-        economic_activity=int(_text(node, "Acteco") or 0),
+        economic_activity=int(_text(node, "Acteco") or "0"),
         address=_text(node, "DirOrigen") or "",
         commune=_text(node, "CmnaOrigen") or "",
         city=_text(node, "CiudadOrigen") or "",
         branch_name=_text(node, "Sucursal") or "",
-        branch_code=int(_text(node, "CdgSIISucur")) if _text(node, "CdgSIISucur") else None,
+        branch_code=int(sucursal) if (sucursal := _text(node, "CdgSIISucur")) else None,
     )
 
 
 def _receiver(node: etree._Element) -> Receiver:
     return Receiver(
-        rut=_text(node, "RUTRecep") or "",
+        rut=Rut(_text(node, "RUTRecep") or ""),
         business_name=_text(node, "RznSocRecep") or "",
         activity=_text(node, "GiroRecep") or "",
         address=_text(node, "DirRecep") or "",
@@ -141,13 +142,13 @@ def _transport(node: etree._Element | None) -> Transport | None:
     driver = None
     if chofer is not None:
         driver = Driver(
-            rut=_text(chofer, "RUTChofer") or "",
+            rut=Rut(_text(chofer, "RUTChofer") or ""),
             name=_text(chofer, "NombreChofer") or "",
         )
     return Transport(
         plate=_text(node, "Patente") or "",
         trailer_plate=_text(node, "PatenteCarro") or "",
-        carrier_rut=_text(node, "RUTTrans"),
+        carrier_rut=Rut(rut_trans) if (rut_trans := _text(node, "RUTTrans")) else None,
         driver=driver,
         dest_address=_text(node, "DirDest") or "",
         dest_commune=_text(node, "CmnaDest") or "",
@@ -229,6 +230,14 @@ def _child(parent: etree._Element, name: str, *, required: bool = False):
     if required:
         raise ParseError(f"Falta el bloque <{name}> en el documento.")
     return None
+
+
+def _required(parent: etree._Element, name: str) -> str:
+    """El valor de un campo sin el cual el documento no se puede leer."""
+    valor = _text(parent, name)
+    if not valor:
+        raise ParseError(f"Falta <{name}> en el documento.")
+    return valor
 
 
 def _text(parent: etree._Element | None, name: str) -> str | None:

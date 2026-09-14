@@ -26,6 +26,7 @@ import os
 import tempfile
 import uuid
 from dataclasses import dataclass
+from typing import Any
 
 import requests
 
@@ -182,7 +183,7 @@ class RCVClient:
 
         result: dict[str, list[dict]] = {}
         for state in states:
-            payload = {
+            payload: dict[str, Any] = {
                 "metaData": {
                     "namespace": f"{_NS}/{method}",
                     "conversationId": self._token,

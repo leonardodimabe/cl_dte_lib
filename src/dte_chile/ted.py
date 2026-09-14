@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import base64
 import datetime as _dt
+from typing import TYPE_CHECKING
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
@@ -38,8 +39,19 @@ from lxml import etree
 from .caf import CAF
 from .models import DTE
 
+if TYPE_CHECKING:  # evita el ciclo: settlement y export_invoice importan ted
+    from .export_invoice import ExportDocument
+    from .settlement import Settlement
 
-def build_ted(dte: DTE, caf: CAF, timestamp: _dt.datetime) -> etree._Element:
+#: Todo lo que lleva timbre: factura, boleta, liquidación y exportación. Es un
+#: único `build_ted` a propósito —el timbre es el mismo para los cuatro—, y esa
+#: unidad fue lo que permitió corregir de una vez el DD de los diez tipos.
+Timbrable = "DTE | Settlement | ExportDocument"
+
+
+def build_ted(
+    dte: DTE | Settlement | ExportDocument, caf: CAF, timestamp: _dt.datetime
+) -> etree._Element:
     """Construye y firma el nodo <TED> de un DTE."""
     if not caf.contains(dte.folio):
         raise ValueError(

@@ -79,3 +79,26 @@ def test_html_exempt_hides_vat():
     )
     assert "IVA (19%)" not in html
     assert "Exento" in html
+
+
+def test_el_impreso_muestra_la_referencia_al_caso_del_set():
+    """El set de certificación referencia su caso con el literal «SET».
+
+    El impreso va al SII en el paso de muestras: ahí esa referencia tiene que
+    leerse tal cual, no como «Tipo SET», que es lo que salía al tratar el tipo
+    de documento como si siempre fuera un número.
+    """
+    from dte_chile.models import Reference
+
+    dte = _dte()
+    dte.references = [
+        Reference(doc_type="SET", folio="0", date=dt.date(2026, 9, 10), reason="CASO 5038170-1")
+    ]
+    html = rep.generate_html(
+        dte,
+        _document_with_ted(),
+        rep.ResolutionInfo(number=0, date=dt.date(2026, 6, 8)),
+    )
+    assert "Ref: SET N° 0" in html
+    assert "CASO 5038170-1" in html
+    assert "Tipo SET" not in html

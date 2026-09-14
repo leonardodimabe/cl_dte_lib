@@ -352,9 +352,7 @@ def test_a_zero_value_document_still_declares_its_three_amounts(cert):
     Una línea con sólo MntTotal=0 deja al Servicio sin los sumandos con que
     cuadra el libro.
     """
-    lines = [
-        BookLine(61, 25, PERIOD_DATE, "60803000-K", "Cliente", ref_doc_type=33, ref_folio=19)
-    ]
+    lines = [BookLine(61, 25, PERIOD_DATE, "60803000-K", "Cliente", ref_doc_type=33, ref_folio=19)]
     cover = BookCover(
         issuer_rut="77262159-0",
         sender_rut="12291733-9",

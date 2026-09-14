@@ -370,9 +370,17 @@ def _total_row(label: str, amount: int, bold: bool = False) -> str:
     return f"<tr{cls}><td>{label}</td><td class='r'>{_money(amount)}</td></tr>"
 
 
-def _doc_label(doc_type: int) -> str:
+def _doc_label(doc_type: int | str) -> str:
+    """Nombre del tipo de documento referenciado.
+
+    Puede no ser un número: el set de certificación exige referenciar el caso
+    con el literal «SET», y en el impreso eso debe leerse tal cual —«Ref: SET
+    N° 0 — CASO 5038170-1»— y no como «Tipo SET».
+    """
+    if isinstance(doc_type, str) and not doc_type.isdigit():
+        return doc_type
     try:
-        return DTEType(doc_type).label
+        return DTEType(int(doc_type)).label
     except ValueError:
         return f"Tipo {doc_type}"
 
