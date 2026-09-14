@@ -26,6 +26,7 @@ except ImportError:  # pragma: no cover - entorno sin xmlsec instalado
     _XMLSEC_OK = False
 
 from .certificate import Certificate
+from .validation import wrap_long_lines
 
 NS_DTE = "http://www.sii.cl/SiiDte"
 NS_DSIG = "http://www.w3.org/2000/09/xmldsig#"
@@ -76,6 +77,13 @@ def sign_enveloped(
             "xmlsec no está instalado. Ejecuta `pip install xmlsec` "
             "(en Windows puede requerir wheels precompilados de PyPI)."
         )
+
+    # El SII rechaza el envío entero si una línea del XML pasa de ~4.090
+    # caracteres («CHR-00002: Line too long»), y un XML sin saltos va todo en
+    # una. Se corta ACÁ porque es el único punto por el que pasan todos los
+    # documentos, y porque tiene que ser antes de firmar: el espacio en blanco
+    # entra en la canonicalización y añadirlo después movería el digest.
+    wrap_long_lines(signed_node)
 
     node_id = signed_node.get("ID")
     # El SII fija (xmldsignature_v10.xsd) C14N **inclusiva** (REC-xml-c14n-20010315),

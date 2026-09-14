@@ -64,10 +64,61 @@ def build_root(localname: str, **attributes: str) -> etree._Element:
 XML_DECLARATION = b'<?xml version="1.0" encoding="ISO-8859-1"?>\n'
 
 
+#: El SII rechaza el envío entero si alguna línea del XML pasa de ~4.090
+#: caracteres: «CHR-00002: Line too long». No está en ningún XSD. Se avisa un
+#: poco antes para no depender del valor exacto.
+MAX_LINE_LENGTH = 4000
+
+
+class LineTooLong(DteError):
+    """Una línea del XML supera lo que el SII acepta."""
+
+
 def serialize_document(element: etree._Element) -> bytes:
     """Serializa un envío en ISO-8859-1 con la declaración que espera el SII."""
     body = etree.tostring(element, xml_declaration=False, encoding="ISO-8859-1")
-    return XML_DECLARATION + body
+    xml = XML_DECLARATION + body
+    _check_line_length(xml)
+    return xml
+
+
+def wrap_long_lines(node: etree._Element, max_len: int = MAX_LINE_LENGTH) -> None:
+    """Corta en líneas las ramas cuya serialización sería demasiado larga.
+
+    Sólo toca lo necesario: si un elemento cabe en una línea, se deja como está.
+    Donde no cabe, cada hijo pasa a su propia línea y se repite el análisis hacia
+    dentro. Así un documento corriente sale igual que siempre y sólo los grandes
+    —un libro de 26 detalles, una liquidación con muchas líneas— se reparten.
+
+    Hay que llamarlo **antes de firmar**: el espacio en blanco es contenido para
+    la canonicalización, así que añadirlo después movería el digest y la firma
+    dejaría de valer.
+    """
+    if len(etree.tostring(node, encoding="ISO-8859-1")) <= max_len:
+        return
+    for hijo in node:
+        if not (hijo.tail or "").endswith("\n"):
+            hijo.tail = (hijo.tail or "") + "\n"
+        wrap_long_lines(hijo, max_len)
+
+
+def _check_line_length(xml: bytes) -> None:
+    """Falla acá antes de que el SII rechace el envío por una línea larga.
+
+    Un XML sin saltos va todo en una línea, y el Servicio lo rechaza entero con
+    «ENV - 3 - Error en Schema - CHR-00002: Line too long». Pasó con un libro de
+    26 detalles, cuya única línea llegó a 10.848 caracteres. Es un límite que no
+    aparece en ningún esquema, así que el XSD lo da por bueno y el rechazo llega
+    después de gastar un TrackID.
+    """
+    for numero, linea in enumerate(xml.splitlines(), start=1):
+        if len(linea) > MAX_LINE_LENGTH:
+            raise LineTooLong(
+                f"La línea {numero} tiene {len(linea)} caracteres y el SII rechaza"
+                f" el envío por encima de ~{MAX_LINE_LENGTH} («CHR-00002: Line too"
+                " long»). Hay que cortar el XML en líneas ANTES de firmarlo: el"
+                " espacio en blanco entra en la canonicalización."
+            )
 
 
 class XSDNotAvailable(DteError):
