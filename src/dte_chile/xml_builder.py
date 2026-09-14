@@ -18,7 +18,7 @@ import datetime as _dt
 from lxml import etree
 
 from .caf import CAF
-from .models import DTE, VAT_RATE
+from .models import DTE, VAT_RATE, VAT_RETENTION_TOTAL
 from .ted import build_ted
 
 
@@ -105,8 +105,14 @@ def _header(doc: etree._Element, dte: DTE) -> None:
             continue
         node = etree.SubElement(totals, "ImptoReten")
         _t(node, "TipoImp", str(retention.code))
-        if retention.rate is not None:
-            _t(node, "TasaImp", _num(retention.rate))
+        # La retención total (código 15) retiene el IVA entero, así que su tasa
+        # ES la del IVA. Omitirla hacía que el SII devolviera «(HED-2-302) Tasa
+        # no corresponde [19.00] <> [0.00]» y aceptara el documento con reparo.
+        tasa = retention.rate
+        if tasa is None and retention.code == VAT_RETENTION_TOTAL:
+            tasa = VAT_RATE
+        if tasa is not None:
+            _t(node, "TasaImp", _num(tasa))
         _t(node, "MontoImp", str(retention.amount_over(dte.vat)))
     _t(totals, "MntTotal", str(dte.total_amount))
 

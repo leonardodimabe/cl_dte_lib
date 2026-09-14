@@ -114,6 +114,11 @@ class PackageGroup:
     seal_issuer: str = ""  # EmisorSello
 
 
+#: FmaPagExp 21 = S/PAGO. Con esta forma de pago el SII exige que los montos
+#: en otra moneda vayan en cero.
+NO_PAYMENT = 21
+
+
 @dataclass
 class OtherCurrency:
     """``<OtraMoneda>``: los mismos montos, expresados en otra moneda.
@@ -376,10 +381,14 @@ def _header(root: etree._Element, doc: ExportDocument) -> None:
         node = etree.SubElement(header, "OtraMoneda")
         _t(node, "TpoMoneda", otra.currency)
         _t(node, "TpoCambio", _fmt(otra.exchange_rate))
-        # La exportación es exenta: lo que hay es monto exento y total, no neto
-        # ni IVA. Se declaran los dos porque el SII contrasta el total.
-        _t(node, "MntExeOtrMnda", _fmt(otra.convert(doc.exempt_amount)))
-        _t(node, "MntTotOtrMnda", _fmt(otra.convert(doc.total_amount)))
+        # Sin pago no hay monto que convertir: el SII responde «(HED-1-803)
+        # Forma de pago es Sin Pago. Mnt.Tot.en Otra Mon. debe ser cero» y
+        # acepta el documento con reparo leve. Se ponen en cero los dos, no sólo
+        # el total, para que el bloque no se contradiga consigo mismo.
+        sin_pago = doc.payment_mode == NO_PAYMENT
+        cero = Decimal(0)
+        _t(node, "MntExeOtrMnda", _fmt(cero if sin_pago else otra.convert(doc.exempt_amount)))
+        _t(node, "MntTotOtrMnda", _fmt(cero if sin_pago else otra.convert(doc.total_amount)))
 
 
 def _transport(header: etree._Element, doc: ExportDocument) -> None:

@@ -516,3 +516,29 @@ def test_sin_marcas_en_los_bultos_no_se_deja_emitir():
     doc.customs.packages[0].marks = ""
     with pytest.raises(ValueError, match="Marcas"):
         doc.validate_content()
+
+
+def test_sin_pago_los_montos_en_otra_moneda_van_en_cero(cert, caf_factory):
+    """«(HED-1-803) Forma de pago es Sin Pago. Mnt.Tot.en Otra Mon. debe ser cero».
+
+    Reparo leve que devolvió el SII en la factura del set de exportación. No
+    basta con poner el total: el exento también, o el bloque se contradice.
+    """
+    doc = _case_5038176_1()
+    doc.payment_mode = 21  # S/PAGO
+    doc.other_currency = OtherCurrency(exchange_rate=Decimal("1265"))
+
+    bloque = build_export(doc, caf_factory(110), TS).find("Encabezado/OtraMoneda")
+    assert bloque.findtext("MntExeOtrMnda") == "0"
+    assert bloque.findtext("MntTotOtrMnda") == "0"
+    # El tipo de cambio sigue declarándose: lo que va en cero son los montos.
+    assert bloque.findtext("TpoCambio") == "1265"
+
+
+def test_con_pago_los_montos_en_otra_moneda_se_convierten(cert, caf_factory):
+    doc = _case_5038176_1()
+    doc.payment_mode = 1  # COB1: hay pago
+    doc.other_currency = OtherCurrency(exchange_rate=Decimal("1265"))
+
+    bloque = build_export(doc, caf_factory(110), TS).find("Encabezado/OtraMoneda")
+    assert bloque.findtext("MntTotOtrMnda") == str(int(Decimal("160677.62") * 1265))

@@ -182,8 +182,12 @@ def test_imptoreten_follows_iva_and_precedes_mnttotal():
         "MntTotal",
     ]
     retention = totals.find("ImptoReten")
-    assert [c.tag for c in retention] == ["TipoImp", "MontoImp"]
+    # La tasa va aunque no se indique: la retención total (15) retiene el IVA
+    # entero, así que su tasa ES la del IVA. Sin ella el SII acepta el documento
+    # con reparo: «(HED-2-302) Tasa no corresponde [19.00] <> [0.00]».
+    assert [c.tag for c in retention] == ["TipoImp", "TasaImp", "MontoImp"]
     assert retention.findtext("TipoImp") == "15"
+    assert retention.findtext("TasaImp") == "19"
     assert retention.findtext("MontoImp") == "773658"
 
 
