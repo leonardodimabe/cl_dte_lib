@@ -14,6 +14,7 @@ Ambientes:
 
 from __future__ import annotations
 
+import datetime as _dt
 import logging
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -57,6 +58,23 @@ class DocTypeStats:
     accepted: int = 0
     rejected: int = 0
     flagged: int = 0
+
+
+@dataclass
+class DocumentStatus:
+    """Lo que el SII dice de UN documento: su estado y el porqué.
+
+    ``label`` es la glosa del estado (p. ej. «DTE Recibido»); ``error_label``,
+    la del reparo o rechazo cuando lo hay. El SII no siempre rellena los mismos
+    campos, así que se guarda ``raw`` para poder leer lo que no se mapeó.
+    """
+
+    doc_type: int
+    folio: int
+    status: str
+    label: str = ""
+    error_label: str = ""
+    raw: str = ""
 
 
 @dataclass
@@ -226,6 +244,75 @@ class SIIClient:
             status=status or "?",
             detail=label or response,
             stats=_parse_stats(tree),
+        )
+
+    # ----- 6) Consulta del estado de UN documento -----
+    DOC_QUERY_SVC = "/DTEWS/QueryEstDte.jws"
+
+    def query_document(
+        self,
+        *,
+        issuer_rut: str,
+        receiver_rut: str,
+        doc_type: int | str,
+        folio: int | str,
+        issue_date: _dt.date,
+        total_amount: int | str,
+        querier_rut: str | None = None,
+    ) -> DocumentStatus:
+        """Estado de un documento concreto ante el SII, con su glosa.
+
+        ``getEstUp`` (por TrackID) sólo entrega el recuento por tipo: cuántos
+        aceptados, rechazados y con reparo. No dice **cuál** ni **por qué**, y
+        para averiguarlo había que pedirle al SII que mandara el detalle por
+        correo. Esto lo pregunta documento por documento.
+
+        El SII identifica el documento por la tupla completa —emisor, receptor,
+        tipo, folio, fecha y monto total—, no sólo por el folio: es su forma de
+        comprobar que quien pregunta conoce el documento.
+
+        ``querier_rut`` es quien consulta; por omisión, el titular del
+        certificado con que se autentica.
+        """
+        if not self._token:
+            self.authenticate()
+        assert self._token is not None
+        consultante = querier_rut or self.cert.rut or issuer_rut
+        cons_body, cons_dv = consultante.split("-")
+        emis_body, emis_dv = issuer_rut.split("-")
+        recep_body, recep_dv = receiver_rut.split("-")
+        response = self._soap_call(
+            self.DOC_QUERY_SVC,
+            "getEstDte",
+            # Nombres y orden del WSDL (QueryEstDte.jws?WSDL).
+            {
+                "RutConsultante": cons_body,
+                "DvConsultante": cons_dv,
+                "RutCompania": emis_body,
+                "DvCompania": emis_dv,
+                "RutReceptor": recep_body,
+                "DvReceptor": recep_dv,
+                "TipoDte": str(int(doc_type)),
+                "FolioDte": str(int(folio)),
+                # El SII espera dd-mm-aaaa acá, no el ISO del documento.
+                "FechaEmisionDte": issue_date.strftime("%d-%m-%Y"),
+                "MontoDte": str(int(total_amount)),
+                "Token": self._token,
+            },
+        )
+        tree = etree.fromstring(response.encode("utf-8") if isinstance(response, str) else response)
+
+        def texto(tag: str) -> str:
+            nodo = tree.find(f".//{{*}}{tag}")
+            return (nodo.text or "").strip() if nodo is not None and nodo.text else ""
+
+        return DocumentStatus(
+            doc_type=int(doc_type),
+            folio=int(folio),
+            status=texto("ESTADO") or "?",
+            label=texto("GLOSA_ESTADO") or texto("GLOSA"),
+            error_label=texto("GLOSA_ERR") or texto("ERR_CODE"),
+            raw=response if isinstance(response, str) else response.decode("utf-8", "replace"),
         )
 
 
