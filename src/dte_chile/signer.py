@@ -12,6 +12,7 @@ producir firmas que el SII acepta. En Windows puede requerir wheels precompilado
 from __future__ import annotations
 
 import base64
+import re
 
 from cryptography import x509
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -34,13 +35,30 @@ NS_XSI = "http://www.w3.org/2001/XMLSchema-instance"
 def wrap_dte(document: etree._Element) -> etree._Element:
     """Crea el nodo raíz <DTE> con el <Documento> dentro (aún sin firmar).
 
-    Declara ``xmlns:xsi`` aunque el <DTE> no lo use: el sobre que lo va a
-    contener sí lo declara (por el ``xsi:schemaLocation`` que exige el SII), y
-    como la firma usa C14N **inclusiva**, los namespaces heredados entran en el
-    digest. Declarándolo ya acá, el contexto al firmar es idéntico al que habrá
-    dentro del sobre y la firma sigue validando.
+    Declara **sólo** el namespace del SII. Nada de ``xmlns:xsi``, aunque el
+    sobre que lo va a contener sí lo declare por el ``xsi:schemaLocation``.
+
+    El motivo está en cómo valida el SII: no canonicaliza el <Documento> dentro
+    del sobre, sino que extrae el <DTE> como fragmento suelto y lo canonicaliza
+    ahí. Y la C14N **inclusiva** emite en el nodo firmado todos los namespaces
+    en ámbito: si al firmar hay un ``xmlns:xsi`` que en el fragmento no está, el
+    digest no coincide y el SII responde «(DTE-3-505) Firma DTE Incorrecta».
+
+    Antes se declaraba aquí, buscando que el contexto de firma fuese idéntico al
+    de dentro del sobre. El razonamiento estaba invertido: el que manda es el
+    del fragmento. Medido sobre un sobre real rechazado —misma firma, mismo
+    documento— el fragmento sin ``xsi`` da inválida y con ``xsi`` válida.
+
+    Es lo que hace el módulo chileno de Odoo, que está certificado: su plantilla
+    escribe ``<DTE xmlns="http://www.sii.cl/SiiDte" version="1.0">`` y calcula el
+    digest sobre el <Documento> serializado por separado.
+
+    Consecuencia que conviene saber: la firma de un <Documento> NO valida si se
+    verifica con el sobre entero como contexto, porque ahí el ``xsi`` del sobre
+    sí está en ámbito. Es correcto, y a los DTE de Odoo les pasa igual: se
+    verifican extrayendo el <DTE>, que es como los lee el Servicio.
     """
-    dte = etree.Element("{%s}DTE" % NS_DTE, nsmap={None: NS_DTE, "xsi": NS_XSI}, version="1.0")
+    dte = etree.Element("{%s}DTE" % NS_DTE, nsmap={None: NS_DTE}, version="1.0")
     dte.append(document)
     return dte
 
@@ -201,32 +219,69 @@ def verify_signature(dte: etree._Element) -> bool:
         return False
 
 
-def verify_signatures(root: etree._Element) -> list[bool]:
-    """Verifica TODAS las firmas XMLDSig del árbol (cada una contra su KeyInfo).
+def _verify_in(contexto: etree._Element, sig: etree._Element) -> bool:
+    """Verifica ``sig`` usando ``contexto`` como documento."""
+    ctx = xmlsec.SignatureContext()
+    for node in contexto.iter():
+        if node.get("ID"):
+            ctx.register_id(node, id_attr="ID")
+    ctx.key = xmlsec.Key.from_memory(
+        _cert_pem_from_keyinfo(sig),
+        xmlsec.constants.KeyDataFormatCertPem,
+        None,
+    )
+    try:
+        ctx.verify(sig)
+        return True
+    except xmlsec.VerificationError:
+        return False
 
-    Registra todos los atributos ``ID`` del documento para que cada Reference
-    resuelva. Devuelve una lista de booleanos, una por <Signature> encontrada.
+
+def verify_signatures(root: etree._Element) -> list[bool]:
+    """Verifica TODAS las firmas XMLDSig del árbol, como las verifica el SII.
+
+    Devuelve una lista de booleanos, una por <Signature> encontrada, en orden.
+
+    La firma de un <DTE> se verifica **con ese <DTE> aislado como contexto**, no
+    con el sobre entero. Es como lo hace el Servicio, y la diferencia no es
+    cosmética: dentro del sobre está en ámbito el ``xmlns:xsi`` de la raíz, que
+    la C14N inclusiva mete en el digest; en el fragmento no está. Verificar con
+    el sobre entero daba por buenas firmas que el SII rechaza —y por malas las
+    correctas—, que es exactamente el agujero por el que se colaron dos envíos.
+
+    Las demás firmas (el <SetDTE> del sobre, un acuse) sí se verifican contra el
+    árbol completo: son la raíz del documento que se transmite, no un trozo.
     """
     if not _XMLSEC_OK:
         raise RuntimeError("xmlsec no está instalado.")
 
     results = []
     for sig in root.iter("{%s}Signature" % NS_DSIG):
-        ctx = xmlsec.SignatureContext()
-        for node in root.iter():
-            if node.get("ID"):
-                ctx.register_id(node, id_attr="ID")
-        ctx.key = xmlsec.Key.from_memory(
-            _cert_pem_from_keyinfo(sig),
-            xmlsec.constants.KeyDataFormatCertPem,
-            None,
-        )
-        try:
-            ctx.verify(sig)
-            results.append(True)
-        except xmlsec.VerificationError:
-            results.append(False)
+        padre = sig.getparent()
+        if padre is not None and padre.tag == "{%s}DTE" % NS_DTE:
+            aislado = _aislar(padre)
+            suya = aislado.find("{%s}Signature" % NS_DSIG)
+            results.append(suya is not None and _verify_in(aislado, suya))
+        else:
+            results.append(_verify_in(root, sig))
     return results
+
+
+#: Declaración de namespace en la etiqueta de apertura que no sea la del SII.
+_NS_AJENO = re.compile(rb'\s+xmlns:[A-Za-z0-9_.-]+="[^"]*"')
+
+
+def _aislar(dte: etree._Element) -> etree._Element:
+    """El <DTE> como fragmento suelto, igual que lo extrae el SII del sobre.
+
+    Serializar el subárbol no basta: lxml repone en la etiqueta de apertura los
+    namespaces que el nodo heredaba del sobre, con lo que el ``xmlns:xsi``
+    volvería a colarse y el fragmento dejaría de parecerse al que viaja. En el
+    sobre transmitido el <DTE> declara sólo el namespace del SII.
+    """
+    crudo = etree.tostring(dte)
+    apertura = crudo[: crudo.index(b">") + 1]
+    return etree.fromstring(crudo.replace(apertura, _NS_AJENO.sub(b"", apertura), 1))
 
 
 def _cert_pem_from_keyinfo(signature_node: etree._Element) -> bytes:

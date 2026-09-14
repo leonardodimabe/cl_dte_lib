@@ -88,30 +88,72 @@ def test_no_se_duplica_la_declaracion(sobre):
     assert etree.fromstring(sobre).tag == "{%s}EnvioDTE" % NS_DTE
 
 
-def test_las_firmas_siguen_valiendo(sobre):
-    """Reponer una declaración redundante no cambia la forma canónica.
+def _verifica(arbol) -> bool:
+    """¿Valida la primera firma de este árbol, con este árbol como contexto?"""
+    firma = arbol.find(".//{%s}Signature" % NS_DSIG)
+    uri = (firma.find(".//{%s}Reference" % NS_DSIG).get("URI") or "").lstrip("#")
+    objetivo = next(n for n in arbol.iter() if n.get("ID") == uri)
+    ctx = xmlsec.SignatureContext()
+    ctx.register_id(objetivo, id_attr="ID")
+    x509 = firma.find(".//{%s}X509Certificate" % NS_DSIG)
+    pem = (
+        b"-----BEGIN CERTIFICATE-----\n"
+        + "".join((x509.text or "").split()).encode()
+        + b"\n-----END CERTIFICATE-----\n"
+    )
+    ctx.key = xmlsec.Key.from_memory(pem, xmlsec.constants.KeyDataFormatCertPem, None)
+    try:
+        ctx.verify(firma)
+        return True
+    except xmlsec.VerificationError:
+        return False
 
-    La C14N inclusiva no emite una declaración idéntica a la que ya está en
-    contexto, así que el digest no se mueve. Si alguna vez dejara de ser cierto,
-    este test lo dice antes que el SII.
+
+def _fragmentos(sobre: bytes) -> list[bytes]:
+    """Cada <DTE> como lo extrae el SII: suelto, con su propia declaración."""
+    decl = b'<?xml version="1.0" encoding="ISO-8859-1"?>'
+    return [decl + f for f in re.findall(rb"<DTE[^>]*>.*?</DTE>", sobre, re.S)]
+
+
+def test_la_firma_del_documento_valida_como_fragmento(sobre):
+    """Así es como el SII valida cada DTE, y por tanto la única que importa.
+
+    Con un ``xmlns:xsi`` de más en el <DTE> al firmar, esto daba inválida y el
+    SII devolvía «(DTE-3-505) Firma DTE Incorrecta» pese a que la firma era
+    correcta dentro del sobre. Costó dos envíos rechazados descubrirlo.
     """
-    arbol = etree.fromstring(sobre)
-    firmas = arbol.findall(".//{%s}Signature" % NS_DSIG)
-    assert len(firmas) == 3  # dos documentos + el SetDTE
+    trozos = _fragmentos(sobre)
+    assert len(trozos) == 2
+    for i, frag in enumerate(trozos, start=1):
+        assert _verifica(etree.fromstring(frag)), f"el DTE {i} no valida como fragmento"
 
-    for firma in firmas:
-        uri = (firma.find(".//{%s}Reference" % NS_DSIG).get("URI") or "").lstrip("#")
-        objetivo = next(n for n in arbol.iter() if n.get("ID") == uri)
-        ctx = xmlsec.SignatureContext()
-        ctx.register_id(objetivo, id_attr="ID")
-        x509 = firma.find(".//{%s}X509Certificate" % NS_DSIG)
-        pem = (
-            b"-----BEGIN CERTIFICATE-----\n"
-            + "".join((x509.text or "").split()).encode()
-            + b"\n-----END CERTIFICATE-----\n"
-        )
-        ctx.key = xmlsec.Key.from_memory(pem, xmlsec.constants.KeyDataFormatCertPem, None)
-        ctx.verify(firma)  # lanza si no valida
+
+def test_el_dte_no_declara_xsi(sobre):
+    """La causa raíz, fijada aparte para que el motivo quede a la vista."""
+    for tag in re.findall(rb"<DTE[^>]*>", sobre):
+        assert b"xmlns:xsi" not in tag, tag
+
+
+def test_la_firma_del_sobre_valida_con_el_sobre_entero(sobre):
+    """El SetDTE sí se valida en el documento completo: es la raíz, no un trozo."""
+    arbol = etree.fromstring(sobre)
+    firma = next(
+        f
+        for f in arbol.findall(".//{%s}Signature" % NS_DSIG)
+        if f.getparent().tag == "{%s}EnvioDTE" % NS_DTE
+    )
+    uri = (firma.find(".//{%s}Reference" % NS_DSIG).get("URI") or "").lstrip("#")
+    assert uri == "SetDoc"
+    ctx = xmlsec.SignatureContext()
+    ctx.register_id(next(n for n in arbol.iter() if n.get("ID") == uri), id_attr="ID")
+    x509 = firma.find(".//{%s}X509Certificate" % NS_DSIG)
+    pem = (
+        b"-----BEGIN CERTIFICATE-----\n"
+        + "".join((x509.text or "").split()).encode()
+        + b"\n-----END CERTIFICATE-----\n"
+    )
+    ctx.key = xmlsec.Key.from_memory(pem, xmlsec.constants.KeyDataFormatCertPem, None)
+    ctx.verify(firma)
 
 
 def test_el_sobre_declara_iso_8859_1(sobre):
