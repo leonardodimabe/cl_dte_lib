@@ -20,6 +20,7 @@ Para certificación el receptor es el SII (RUT 60803000-K) y NroResol = 0.
 from __future__ import annotations
 
 import datetime as _dt
+import re
 from dataclasses import dataclass, field
 
 from lxml import etree
@@ -88,6 +89,33 @@ def _t(parent: etree._Element, tag: str, value: str) -> None:
     node.text = value
 
 
+#: ``<DTE ...>`` sin declaración de namespace propia. No casa con ``<EnvioDTE``
+#: (ahí el ``<`` va seguido de ``E``) ni con el cierre ``</DTE>``.
+_DTE_ABIERTO = re.compile(rb"<DTE(?![^>]*\sxmlns=)(\s[^>]*)?>")
+
+
 def serialize(envelope: etree._Element) -> bytes:
-    """Serializa el sobre en ISO-8859-1 con declaración (formato que espera el SII)."""
-    return serialize_document(envelope)
+    """Serializa el sobre en ISO-8859-1 con declaración (formato que espera el SII).
+
+    Cada ``<DTE>`` sale con su propio ``xmlns``, aunque lo herede del sobre.
+
+    lxml elimina las declaraciones redundantes al serializar: como ``<EnvioDTE>``
+    ya declara el namespace por defecto, el ``<DTE>`` de dentro queda desnudo.
+    El XML es idéntico para cualquier parser —el namespace se hereda— y xmlsec
+    valida la firma sin problema, porque canonicaliza con el árbol completo.
+
+    Pero el SII no valida así: toma cada ``<DTE>`` como fragmento suelto, y ahí
+    el namespace heredado ya no existe. Recalcula otro digest y responde
+    **(DTE-3-505) Firma DTE Incorrecta**, que es un mensaje engañoso —la firma
+    está bien— y manda a buscar el problema donde no está.
+
+    Reponer la declaración es seguro: la C14N inclusiva no emite una declaración
+    idéntica a la que ya está en contexto (Canonical XML 1.0 §2.3), así que la
+    forma canónica no cambia y las firmas del documento y del SetDTE siguen
+    valiendo. Verificado con xmlsec sobre un sobre real antes y después.
+
+    Es el mismo camino que toma el módulo chileno de Odoo, que arma el sobre
+    concatenando texto y por eso nunca pierde el ``xmlns`` del ``<DTE>``.
+    """
+    xml = serialize_document(envelope)
+    return _DTE_ABIERTO.sub(rb'<DTE xmlns="' + NS.encode() + rb'"\1>', xml)

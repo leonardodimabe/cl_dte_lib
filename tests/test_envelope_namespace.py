@@ -1,0 +1,120 @@
+"""Cada <DTE> del sobre lleva su propio xmlns, y las firmas siguen valiendo.
+
+Nace de un rechazo real: el SII devolvió «(DTE-3-505) Firma DTE Incorrecta» en
+los 8 documentos de un sobre cuyas firmas eran correctas —xmlsec las validaba
+todas—. El motivo era que lxml elimina la declaración de namespace redundante
+del <DTE> al serializar, y el SII valida cada <DTE> como fragmento suelto.
+"""
+
+import datetime as dt
+import re
+from collections import Counter
+
+import pytest
+import xmlsec
+from lxml import etree
+
+from dte_chile.envelope import Cover, build_envelope
+from dte_chile.envelope import serialize as serialize_envelope
+from dte_chile.models import DTE, DTEType, Issuer, Item, Receiver
+from dte_chile.signer import sign_document
+from dte_chile.xml_builder import build_document
+
+TS = dt.datetime(2026, 9, 14, 11, 36, 0)
+ISSUE_DATE = dt.date(2026, 9, 14)
+NS_DSIG = "http://www.w3.org/2000/09/xmldsig#"
+NS_DTE = "http://www.sii.cl/SiiDte"
+
+
+def _factura(folio: int, receptor: str) -> DTE:
+    return DTE(
+        type=DTEType.AFFECTED_INVOICE,
+        folio=folio,
+        issue_date=ISSUE_DATE,
+        issuer=Issuer(
+            rut="76158145-7",
+            business_name="CONSTRUCTORA DE PRUEBA SPA",
+            activity="Obras de construccion",
+            economic_activity=439000,
+            address="Camino Melipilla 1234",
+            commune="RANCAGUA",
+            city="RANCAGUA",
+        ),
+        # Con eñe a propósito: el sobre va en ISO-8859-1 y así también se
+        # comprueba que la codificación no rompe el digest.
+        receiver=Receiver(
+            rut="17099910-K",
+            business_name=receptor,
+            activity="Comercio al por mayor",
+            address="Av. Cliente 100",
+            commune="Providencia",
+            city="Santiago",
+        ),
+        items=[Item(name="Cajón AFECTO", quantity=2, unit_price=1000)],
+    )
+
+
+@pytest.fixture
+def sobre(cert, caf_factory) -> bytes:
+    documentos = [
+        _factura(1, "INVERSIONES VIÑEDOS Y FRUTALES LIMITADA"),
+        _factura(2, "CLIENTE DOS SPA"),
+    ]
+    firmados = [
+        sign_document(build_document(d, caf_factory(int(d.type)), TS), cert) for d in documentos
+    ]
+    cover = Cover(
+        issuer_rut="76158145-7",
+        sender_rut="77777777-7",
+        resolution_date=dt.date(2026, 8, 26),
+        subtotals=sorted(Counter(int(d.type) for d in documentos).items()),
+    )
+    return serialize_envelope(build_envelope(firmados, cover, cert, TS))
+
+
+def test_cada_dte_declara_su_namespace(sobre):
+    """Sin esto el SII responde DTE-3-505 aunque la firma sea correcta."""
+    aperturas = re.findall(rb"<DTE[^>]*>", sobre)
+    assert len(aperturas) == 2
+    for tag in aperturas:
+        assert b'xmlns="http://www.sii.cl/SiiDte"' in tag, tag
+
+
+def test_no_se_duplica_la_declaracion(sobre):
+    """Reponerla dos veces daría un XML mal formado."""
+    for tag in re.findall(rb"<DTE[^>]*>", sobre):
+        assert tag.count(b"xmlns=") == 1, tag
+    # Y el sobre sigue siendo parseable, que es la comprobación de verdad.
+    assert etree.fromstring(sobre).tag == "{%s}EnvioDTE" % NS_DTE
+
+
+def test_las_firmas_siguen_valiendo(sobre):
+    """Reponer una declaración redundante no cambia la forma canónica.
+
+    La C14N inclusiva no emite una declaración idéntica a la que ya está en
+    contexto, así que el digest no se mueve. Si alguna vez dejara de ser cierto,
+    este test lo dice antes que el SII.
+    """
+    arbol = etree.fromstring(sobre)
+    firmas = arbol.findall(".//{%s}Signature" % NS_DSIG)
+    assert len(firmas) == 3  # dos documentos + el SetDTE
+
+    for firma in firmas:
+        uri = (firma.find(".//{%s}Reference" % NS_DSIG).get("URI") or "").lstrip("#")
+        objetivo = next(n for n in arbol.iter() if n.get("ID") == uri)
+        ctx = xmlsec.SignatureContext()
+        ctx.register_id(objetivo, id_attr="ID")
+        x509 = firma.find(".//{%s}X509Certificate" % NS_DSIG)
+        pem = (
+            b"-----BEGIN CERTIFICATE-----\n"
+            + "".join((x509.text or "").split()).encode()
+            + b"\n-----END CERTIFICATE-----\n"
+        )
+        ctx.key = xmlsec.Key.from_memory(pem, xmlsec.constants.KeyDataFormatCertPem, None)
+        ctx.verify(firma)  # lanza si no valida
+
+
+def test_el_sobre_declara_iso_8859_1(sobre):
+    """La reposición se hace sobre bytes: no puede alterar la cabecera."""
+    assert sobre.startswith(b'<?xml version="1.0" encoding="ISO-8859-1"?>')
+    assert "VIÑEDOS".encode("ISO-8859-1") in sobre
