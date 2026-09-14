@@ -84,6 +84,9 @@ class SubmissionResult:
     detail: str = ""
     #: Desglose por tipo de documento. Vacío en libros, que no lo llevan.
     stats: list[DocTypeStats] = field(default_factory=list)
+    #: La respuesta del SII tal cual. Se guardaba sólo la glosa y se tiraba el
+    #: resto, así que cualquier campo de más era invisible.
+    raw: str = ""
 
     @property
     def accepted(self) -> int:
@@ -244,6 +247,12 @@ class SIIClient:
             status=status or "?",
             detail=label or response,
             stats=_parse_stats(tree),
+            # La respuesta entera, no sólo la glosa. Se guardaba únicamente el
+            # GLOSA y se tiraba el resto, así que cualquier campo que el SII
+            # mande de más —o que añada mañana— era invisible. Es el único sitio
+            # donde se puede comprobar si el Servicio entrega por aquí el motivo
+            # de un reparo, que hasta ahora sólo hemos visto llegar por correo.
+            raw=response if isinstance(response, str) else response.decode("utf-8", "replace"),
         )
 
     # ----- 6) Consulta del estado de UN documento -----
