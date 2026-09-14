@@ -132,12 +132,14 @@ class ReceiptClient:
         self, envelope_xml: bytes, issuer_rut: str, sender_rut: str
     ) -> SubmissionResult:
         """Sube el sobre EnvioBOLETA y devuelve el TrackID (15 dígitos)."""
-        if not self._token:
-            self.authenticate()
+        # El token se toma de `authenticate`, que siempre devuelve uno: leerlo
+        # del atributo obliga a demostrar que no es None justo después de
+        # haberlo pedido.
+        token = self._token or self.authenticate()
 
         issuer_body, issuer_dv = issuer_rut.split("-")
         sender_body, sender_dv = sender_rut.split("-")
-        self.session.cookies.set("TOKEN", self._token, domain=f"{self.environment.value}.sii.cl")
+        self.session.cookies.set("TOKEN", token, domain=f"{self.environment.value}.sii.cl")
 
         try:
             response = self.session.post(
