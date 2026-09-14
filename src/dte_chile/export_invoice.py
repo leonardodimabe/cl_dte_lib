@@ -115,6 +115,35 @@ class PackageGroup:
 
 
 @dataclass
+class OtherCurrency:
+    """``<OtraMoneda>``: los mismos montos, expresados en otra moneda.
+
+    En exportación el documento va en moneda extranjera y el SII pide además su
+    equivalente en pesos. El XSD la declara opcional, pero el Servicio la exige:
+    sin ella responde «(HED-3-834) Exportacion: seccion (OtraMoneda) obligatoria
+    - montos en pesos chilenos» y rechaza el documento.
+
+    Sólo se indica el tipo de cambio; los montos se derivan de los del propio
+    documento. Escribirlos aparte permitiría que dejaran de cuadrar con el
+    total, que es justo lo que el SII contrasta.
+    """
+
+    #: Pesos por unidad de la moneda del documento (TpoCambio).
+    exchange_rate: Decimal
+    #: TpoMoneda de destino. Tabla de monedas de Aduana.
+    currency: str = "PESO CL"
+
+    def __post_init__(self) -> None:
+        self.exchange_rate = Decimal(str(self.exchange_rate))
+        if self.exchange_rate <= 0:
+            raise ValueError("El tipo de cambio debe ser mayor que cero.")
+
+    def convert(self, amount: Decimal) -> Decimal:
+        """El monto en la otra moneda, redondeado como el peso: sin decimales."""
+        return (amount * self.exchange_rate).quantize(Decimal(1), rounding=ROUND_HALF_UP)
+
+
+@dataclass
 class Customs:
     """Bloque ``<Aduana>``. Los códigos vienen de las tablas de Aduana del SII."""
 
@@ -170,6 +199,8 @@ class ExportDocument:
     customs: Customs | None = None
     payment_mode: int | None = None  # FmaPagExp
     service_indicator: int | None = None  # IndServicio
+    #: <OtraMoneda>: los mismos montos en pesos. Obligatoria en exportación.
+    other_currency: OtherCurrency | None = None
     # <Extranjero>: identificación del comprador de fuera de Chile.
     foreign_id: str = ""  # NumId (pasaporte, tax id del país, etc.)
     receiver_nationality: int | None = None  # Nacionalidad: código de país de Aduana
@@ -213,6 +244,24 @@ class ExportDocument:
             raise ValueError("El documento de exportación debe tener al menos una línea.")
         if not self.currency:
             raise ValueError("Falta la moneda de la operación (TpoMoneda).")
+        if self.other_currency is None:
+            # El XSD la declara opcional (minOccurs="0"), así que un documento
+            # sin ella valida contra el esquema y el SII lo rechaza igual con
+            # «(HED-3-834) Exportacion: seccion (OtraMoneda) obligatoria». Se
+            # exige acá porque es el único sitio donde se detecta antes de
+            # gastar un folio.
+            raise ValueError(
+                "Falta <OtraMoneda>: el SII la exige en los documentos de exportación,"
+                " con los montos en pesos chilenos y el tipo de cambio."
+            )
+        for position, group in enumerate(self.customs.packages if self.customs else [], start=1):
+            if not group.marks.strip():
+                # Otro campo opcional en el XSD que el SII exige: responde
+                # «(HED-2-804) Exportacion : Campo obligatorio : Marcas».
+                raise ValueError(
+                    f"Falta Marcas en el grupo de bultos {position}: el SII lo exige"
+                    " cuando el documento declara <TipoBultos>."
+                )
         if self.type in (DTEType.EXPORT_DEBIT_NOTE, DTEType.EXPORT_CREDIT_NOTE):
             if not self.references:
                 raise ValueError(
@@ -319,6 +368,18 @@ def _header(root: etree._Element, doc: ExportDocument) -> None:
     _t(totals, "TpoMoneda", doc.currency)
     _t(totals, "MntExe", _fmt(doc.exempt_amount))
     _t(totals, "MntTotal", _fmt(doc.total_amount))
+
+    # <OtraMoneda> va después de <Totales>, dentro de <Encabezado>, y es el
+    # último hijo que admite el XSD ahí.
+    otra = doc.other_currency
+    if otra is not None:
+        node = etree.SubElement(header, "OtraMoneda")
+        _t(node, "TpoMoneda", otra.currency)
+        _t(node, "TpoCambio", _fmt(otra.exchange_rate))
+        # La exportación es exenta: lo que hay es monto exento y total, no neto
+        # ni IVA. Se declaran los dos porque el SII contrasta el total.
+        _t(node, "MntExeOtrMnda", _fmt(otra.convert(doc.exempt_amount)))
+        _t(node, "MntTotOtrMnda", _fmt(otra.convert(doc.total_amount)))
 
 
 def _transport(header: etree._Element, doc: ExportDocument) -> None:

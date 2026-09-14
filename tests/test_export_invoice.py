@@ -31,6 +31,7 @@ from dte_chile.export_invoice import (
     Customs,
     ExportDocument,
     ExportItem,
+    OtherCurrency,
     PackageGroup,
     build_export,
 )
@@ -79,6 +80,9 @@ def _document(items, doc_type=DTEType.EXPORT_INVOICE, **kw):
         receiver=_foreign_buyer(),
         currency=kw.pop("currency", "DOLAR USA"),
         items=items,
+        # El SII exige <OtraMoneda> en todo documento de exportación, así que
+        # todos los casos la llevan salvo que el test la quite a propósito.
+        other_currency=kw.pop("other_currency", OtherCurrency(exchange_rate=Decimal("1200"))),
         **kw,
     )
 
@@ -99,7 +103,13 @@ def _case_5038176_1():
             gross_weight_unit=code_for(MEASURE_UNITS, "LT"),
             net_weight_unit=code_for(MEASURE_UNITS, "LT"),
             total_packages=87,
-            packages=[PackageGroup(kind_code=code_for(PACKAGE_TYPES, "ROLLOS"), quantity=87)],
+            packages=[
+                PackageGroup(
+                    kind_code=code_for(PACKAGE_TYPES, "ROLLOS"),
+                    quantity=87,
+                    marks="CHATARRA ALUMINIO",
+                )
+            ],
             freight="3574.57",
             insurance="2759.05",
             receiver_country=code_for(COUNTRIES, "ESPAÑA"),
@@ -444,3 +454,65 @@ def test_a_line_that_states_its_amount_still_applies_its_discount():
 
 def test_a_line_amount_without_percentages_is_left_alone():
     assert ExportItem("SERVICIO", amount=42).line_amount == Decimal("42")
+
+
+# --------------------------------------------------------------------------- #
+#  OtraMoneda
+# --------------------------------------------------------------------------- #
+
+
+def test_la_exportacion_declara_sus_montos_en_pesos(cert, caf_factory):
+    """«(HED-3-834) Exportacion: seccion (OtraMoneda) obligatoria».
+
+    El SII rechazó los tres documentos del set de exportación por esto. El XSD
+    la declara opcional (minOccurs="0"), así que el documento validaba contra el
+    esquema y el rechazo llegaba después, con un folio ya gastado.
+    """
+    doc = _case_5038176_1()
+    doc.other_currency = OtherCurrency(exchange_rate=Decimal("1200"))
+    root = build_export(doc, caf_factory(110), TS)
+
+    bloque = root.find("Encabezado/OtraMoneda")
+    assert bloque is not None, "falta <OtraMoneda>"
+    # Va después de <Totales> y con el orden del XSD.
+    assert [c.tag for c in root.find("Encabezado")][-2:] == ["Totales", "OtraMoneda"]
+    assert [c.tag for c in bloque] == [
+        "TpoMoneda",
+        "TpoCambio",
+        "MntExeOtrMnda",
+        "MntTotOtrMnda",
+    ]
+    assert bloque.findtext("TpoMoneda") == "PESO CL"
+    # 872 x 177 = 154344, + flete 3574.57 + seguro 2759.05 = 160677.62
+    assert bloque.findtext("MntTotOtrMnda") == str(int(Decimal("160677.62") * 1200))
+
+
+def test_sin_otra_moneda_no_se_deja_emitir(cert, caf_factory):
+    """Mejor fallar acá que gastar un folio en algo que el SII rechaza."""
+    doc = _case_5038176_1()
+    doc.other_currency = None
+    with pytest.raises(ValueError, match="OtraMoneda"):
+        doc.validate_content()
+
+
+def test_el_tipo_de_cambio_tiene_que_ser_positivo():
+    with pytest.raises(ValueError, match="mayor que cero"):
+        OtherCurrency(exchange_rate=Decimal("0"))
+
+
+def test_los_pesos_se_redondean_sin_decimales():
+    """El peso chileno no tiene fracción; el SII contrasta el total."""
+    otra = OtherCurrency(exchange_rate=Decimal("950.5"))
+    assert otra.convert(Decimal("10.01")) == Decimal("9515")
+
+
+def test_sin_marcas_en_los_bultos_no_se_deja_emitir():
+    """«(HED-2-804) Exportacion : Campo obligatorio : Marcas».
+
+    Opcional en el XSD, obligatoria para el Servicio en cuanto el documento
+    declara <TipoBultos>.
+    """
+    doc = _case_5038176_1()
+    doc.customs.packages[0].marks = ""
+    with pytest.raises(ValueError, match="Marcas"):
+        doc.validate_content()

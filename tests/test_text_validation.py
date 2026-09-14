@@ -264,7 +264,13 @@ def test_clean_settlement_validates():
 def test_export_validates_the_customs_free_text():
     from decimal import Decimal
 
-    from dte_chile.export_invoice import Customs, ExportDocument, ExportItem, PackageGroup
+    from dte_chile.export_invoice import (
+        Customs,
+        ExportDocument,
+        ExportItem,
+        OtherCurrency,
+        PackageGroup,
+    )
 
     document = ExportDocument(
         type=DTEType.EXPORT_INVOICE,
@@ -273,11 +279,12 @@ def test_export_validates_the_customs_free_text():
         issuer=_issuer(),
         receiver=_receiver(),
         currency="DOLAR USA",
+        other_currency=OtherCurrency(exchange_rate=Decimal("950")),
         items=[ExportItem("CHATARRA", quantity=Decimal(1), unit_price=Decimal(100))],
         customs=Customs(
             transport_name="N" * 50,  # admite 40
             booking="B" * 30,  # admite 20
-            packages=[PackageGroup(kind_code=13, container_id="C" * 40)],  # admite 25
+            packages=[PackageGroup(kind_code=13, marks="M", container_id="C" * 40)],  # admite 25
         ),
     )
     with pytest.raises(DocumentDataError) as ex:
@@ -291,7 +298,7 @@ def test_export_validates_the_customs_free_text():
 def test_clean_export_validates():
     from decimal import Decimal
 
-    from dte_chile.export_invoice import ExportDocument, ExportItem
+    from dte_chile.export_invoice import ExportDocument, ExportItem, OtherCurrency
 
     ExportDocument(
         type=DTEType.EXPORT_INVOICE,
@@ -300,5 +307,6 @@ def test_clean_export_validates():
         issuer=_issuer(),
         receiver=_receiver(),
         currency="DOLAR USA",
+        other_currency=OtherCurrency(exchange_rate=Decimal("950")),
         items=[ExportItem("CHATARRA DE ALUMINIO", quantity=Decimal(1), unit_price=Decimal(100))],
     ).validate()
