@@ -153,6 +153,10 @@ def _transport(header: etree._Element, dte: DTE) -> None:
         _t(node, "FchLlegada", tr.arrival_date.isoformat())
 
 
+#: El XSD admite hasta dos <CodImpAdic> por línea de detalle.
+MAX_LINE_TAX_CODES = 2
+
+
 def _items(doc: etree._Element, dte: DTE) -> None:
     for i, item in enumerate(dte.items, start=1):
         # Orden del XSD: NroLinDet, CdgItem, IndExe, Retenedor, NmbItem, DscItem,
@@ -177,6 +181,17 @@ def _items(doc: etree._Element, dte: DTE) -> None:
             _t(detail, "DescuentoPct", _num(item.discount_pct))
         if item.discount:
             _t(detail, "DescuentoMonto", str(item.discount))
+        # El impuesto adicional o retención va TAMBIÉN por línea. El SII suma
+        # estos códigos para contrastar el <ImptoReten> del encabezado: sin
+        # ellos la suma da cero y responde «(HED-2-300) Total Impuesto/Retencion
+        # No Cuadra con Detalle», aceptando el documento con reparo.
+        #
+        # Sólo en las líneas afectas: una exenta no soporta la retención, y
+        # declararla ahí descuadraría el total por el otro lado. El XSD admite
+        # hasta dos códigos por línea.
+        if dte.retentions and not (item.exempt or dte.type.is_exempt):
+            for retention in dte.retentions[:MAX_LINE_TAX_CODES]:
+                _t(detail, "CodImpAdic", str(retention.code))
         _t(detail, "MontoItem", str(item.amount))
 
 

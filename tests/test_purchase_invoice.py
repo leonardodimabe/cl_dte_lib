@@ -21,7 +21,7 @@ from dte_chile.models import (
     Retention,
 )
 from dte_chile.representation import is_cedible
-from dte_chile.xml_builder import _header
+from dte_chile.xml_builder import _header, _items
 
 ISSUE_DATE = dt.date(2026, 8, 31)
 
@@ -255,3 +255,26 @@ def test_a_real_retention_is_still_declared():
     _header(doc, dte)
 
     assert doc.findtext("Encabezado/Totales/ImptoReten/MontoImp") == str(dte.vat)
+
+
+def test_la_retencion_tambien_va_en_cada_linea_afecta():
+    """«(HED-2-300) Total Impuesto/Retencion No Cuadra con Detalle».
+
+    El SII suma los <CodImpAdic> de las líneas para contrastar el <ImptoReten>
+    del encabezado. Sin ellos la suma da cero, el total no cuadra y acepta el
+    documento con reparo. Pasó en los tres documentos del set de factura de
+    compra, dos envíos seguidos.
+    """
+    from lxml import etree
+
+    document = etree.Element("Documento")
+    _header(document, _purchase())
+    _items(document, _purchase())
+
+    detalles = document.findall("Detalle")
+    assert detalles, "el documento de prueba no trae líneas"
+    for detalle in detalles:
+        assert detalle.findtext("CodImpAdic") == "15"
+        # Orden del XSD: CodImpAdic va justo antes de MontoItem.
+        etiquetas = [h.tag for h in detalle]
+        assert etiquetas.index("CodImpAdic") == etiquetas.index("MontoItem") - 1
