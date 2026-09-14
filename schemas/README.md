@@ -12,6 +12,7 @@ Coloca aquí los archivos **XSD oficiales del SII**. El validador
 | Respuesta / acuse de recibo | `RespuestaEnvioDTE_v10.xsd` |
 | Recibo de mercaderías (Ley 19.983) | `Recibos_v10.xsd` |
 | Libro de Compras y Ventas | `LibroCV_v10.xsd` |
+| Libro de Guías de Despacho | `LibroGuia_v10.xsd` |
 
 Estos esquemas **se referencian entre sí** por ruta relativa (`xsd:import` /
 `xsd:include`), por lo que hay que colocar **todos** los archivos del paquete
@@ -31,7 +32,8 @@ schemas/
 ├── dte/        ← DTE_v10.xsd, EnvioDTE_v10.xsd, SiiTypes, xmldsignature
 ├── iecv/       ← LibroCV_v10.xsd + Lce*  (LibroCompraVenta)
 ├── response/   ← RespuestaEnvioDTE_v10.xsd (+ SiiTypes, xmldsignature copiados)
-└── receipts/   ← EnvioRecibos_v10.xsd, Recibos_v10.xsd  (Ley 19.983)
+├── receipts/   ← EnvioRecibos_v10.xsd, Recibos_v10.xsd  (Ley 19.983)
+└── lgd/        ← LibroGuia_v10.xsd (Libro de Guías de Despacho)
 ```
 
 ## Descarga automática (recomendado)
@@ -40,7 +42,7 @@ schemas/
 powershell -ExecutionPolicy Bypass -File schemas\download_schemas.ps1
 ```
 
-Descarga los 4 paquetes oficiales del SII, los ubica en sus subcarpetas, copia
+Descarga los 5 paquetes oficiales del SII, los ubica en sus subcarpetas, copia
 las dependencias que faltan y aplica un parche menor (libxml2 no acepta un
 decimal de 34 dígitos en `LceSiiTypes_v10.xsd`).
 
@@ -52,6 +54,7 @@ decimal de 34 dígitos en `LceSiiTypes_v10.xsd`).
 | `schema_iecv.zip` | LibroCV (IECV) |
 | `schema_ic.zip` | RespuestaEnvioDTE |
 | `schema19983.zip` | Recibos (Ley 19.983) |
+| `schema_lgd.zip` | LibroGuia (Libro de Guías de Despacho) |
 
 Base: `https://www.sii.cl/factura_electronica/factura_mercado/`
 

@@ -21,6 +21,7 @@ from lxml import etree
 
 from . import signer
 from .certificate import Certificate
+from .validation import serialize_document
 
 NS = "http://www.sii.cl/SiiDte"
 NS_DSIG = "http://www.w3.org/2000/09/xmldsig#"
@@ -261,7 +262,7 @@ def build_receipts_envelope(
 
 
 def serialize(element: etree._Element) -> bytes:
-    return etree.tostring(element, xml_declaration=True, encoding="ISO-8859-1")
+    return serialize_document(element)
 
 
 # --------------------------------------------------------------------------- #

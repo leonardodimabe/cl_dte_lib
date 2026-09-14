@@ -22,6 +22,10 @@ from lxml import etree
 
 from .errors import DteError
 
+# Namespaces del SII y de XML Schema Instance.
+SII_NS = "http://www.sii.cl/SiiDte"
+XSI_NS = "http://www.w3.org/2001/XMLSchema-instance"
+
 # Elemento raíz (nombre local) → archivo XSD que lo valida.
 SCHEMAS: dict[str, str] = {
     "DTE": "dte/DTE_v10.xsd",
@@ -29,7 +33,41 @@ SCHEMAS: dict[str, str] = {
     "RespuestaDTE": "response/RespuestaEnvioDTE_v10.xsd",
     "EnvioRecibos": "receipts/EnvioRecibos_v10.xsd",
     "LibroCompraVenta": "iecv/LibroCV_v10.xsd",
+    "LibroGuia": "lgd/LibroGuia_v10.xsd",
+    "EnvioBOLETA": "bol/EnvioBOLETA_v11.xsd",
+    "ConsumoFolios": "bol/ConsumoFolio_v10.xsd",
 }
+
+
+def schema_location(root_localname: str) -> str:
+    """Valor de ``xsi:schemaLocation`` que el SII espera para ese documento."""
+    return f"{SII_NS} {Path(SCHEMAS[root_localname]).name}"
+
+
+def build_root(localname: str, **attributes: str) -> etree._Element:
+    """Crea la raíz de un envío, ya declarada para el SII.
+
+    El SII **rechaza** con ``SCH-00001: Invalid Schema Name`` cualquier archivo
+    que no traiga ``xsi:schemaLocation``, aunque el XML sea válido contra el XSD.
+    Por eso todas las raíces se construyen acá y no a mano.
+    """
+    element = etree.Element(
+        f"{{{SII_NS}}}{localname}", nsmap={None: SII_NS, "xsi": XSI_NS}, **attributes
+    )
+    element.set(f"{{{XSI_NS}}}schemaLocation", schema_location(localname))
+    return element
+
+
+# El SII exige la declaración EXACTAMENTE así, con comillas dobles. lxml la
+# emite con comillas simples y el Servicio responde "CHR-00001: Invalid
+# Character Set", por eso se escribe a mano.
+XML_DECLARATION = b'<?xml version="1.0" encoding="ISO-8859-1"?>\n'
+
+
+def serialize_document(element: etree._Element) -> bytes:
+    """Serializa un envío en ISO-8859-1 con la declaración que espera el SII."""
+    body = etree.tostring(element, xml_declaration=False, encoding="ISO-8859-1")
+    return XML_DECLARATION + body
 
 
 class XSDNotAvailable(DteError):

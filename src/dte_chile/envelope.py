@@ -26,6 +26,7 @@ from lxml import etree
 
 from . import signer
 from .certificate import Certificate
+from .validation import build_root, serialize_document
 
 NS = "http://www.sii.cl/SiiDte"
 
@@ -51,7 +52,7 @@ def build_envelope(
     timestamp: _dt.datetime,
 ) -> etree._Element:
     """Arma y firma el <EnvioDTE> con los DTE ya firmados."""
-    envelope = etree.Element("{%s}EnvioDTE" % NS, nsmap={None: NS}, version="1.0")
+    envelope = build_root("EnvioDTE", version="1.0")
 
     set_dte = etree.SubElement(envelope, "{%s}SetDTE" % NS, ID="SetDoc")
     _cover(set_dte, cover, timestamp)
@@ -89,4 +90,4 @@ def _t(parent: etree._Element, tag: str, value: str) -> None:
 
 def serialize(envelope: etree._Element) -> bytes:
     """Serializa el sobre en ISO-8859-1 con declaración (formato que espera el SII)."""
-    return etree.tostring(envelope, xml_declaration=True, encoding="ISO-8859-1")
+    return serialize_document(envelope)

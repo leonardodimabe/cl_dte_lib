@@ -35,3 +35,50 @@ def cert() -> Certificate:
         cert_pem=certificate.public_bytes(serialization.Encoding.PEM),
         rut="77777777-7",
     )
+
+
+@pytest.fixture(scope="session")
+def caf_factory():
+    """Genera CAF válidos (con llave RSA real) para firmar el TED en los tests.
+
+    El bloque <CAF> no lleva firma real del SII —no la tenemos— pero sí una
+    RSASK utilizable, que es lo que el TED necesita para timbrar.
+    """
+    from lxml import etree
+
+    from dte_chile.caf import CAF, load_caf_bytes
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    private_pem = key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.TraditionalOpenSSL,
+        serialization.NoEncryption(),
+    ).decode()
+    public_pem = (
+        key.public_key()
+        .public_bytes(serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo)
+        .decode()
+    )
+
+    def _make(
+        doc_type: int, folio_from: int = 1, folio_to: int = 100, rut: str = "76158145-7"
+    ) -> CAF:
+        root = etree.Element("AUTORIZACION")
+        caf = etree.SubElement(root, "CAF", version="1.0")
+        da = etree.SubElement(caf, "DA")
+        for tag, value in (("RE", rut), ("RS", "DEMO SPA"), ("TD", str(doc_type))):
+            etree.SubElement(da, tag).text = value
+        rng = etree.SubElement(da, "RNG")
+        etree.SubElement(rng, "D").text = str(folio_from)
+        etree.SubElement(rng, "H").text = str(folio_to)
+        etree.SubElement(da, "FA").text = "2026-01-01"
+        pk = etree.SubElement(da, "RSAPK")
+        etree.SubElement(pk, "M").text = "eA=="
+        etree.SubElement(pk, "E").text = "Aw=="
+        etree.SubElement(da, "IDK").text = "100"
+        etree.SubElement(caf, "FRMA", algoritmo="SHA1withRSA").text = "eA=="
+        etree.SubElement(root, "RSASK").text = private_pem
+        etree.SubElement(root, "RSAPUBK").text = public_pem
+        return load_caf_bytes(etree.tostring(root))
+
+    return _make

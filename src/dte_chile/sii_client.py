@@ -15,7 +15,7 @@ Ambientes:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 import requests
@@ -43,10 +43,45 @@ class Environment(StrEnum):
 
 
 @dataclass
+class DocTypeStats:
+    """Cuántos documentos de un tipo aceptó, rechazó o reparó el SII.
+
+    Sale del bloque ``ESTADISTICA`` que devuelve ``QueryEstUp``. Es el dato que
+    de verdad dice cómo fue el envío: el ESTADO del sobre puede ser ``EPR``
+    —«envío procesado»— con todos sus documentos rechazados dentro, porque una
+    cosa es que el sobre se haya podido leer y otra que su contenido valga.
+    """
+
+    doc_type: int
+    informed: int = 0
+    accepted: int = 0
+    rejected: int = 0
+    flagged: int = 0
+
+
+@dataclass
 class SubmissionResult:
     track_id: str | None
     status: str
     detail: str = ""
+    #: Desglose por tipo de documento. Vacío en libros, que no lo llevan.
+    stats: list[DocTypeStats] = field(default_factory=list)
+
+    @property
+    def accepted(self) -> int:
+        return sum(s.accepted for s in self.stats)
+
+    @property
+    def rejected(self) -> int:
+        return sum(s.rejected for s in self.stats)
+
+    @property
+    def flagged(self) -> int:
+        return sum(s.flagged for s in self.stats)
+
+    @property
+    def informed(self) -> int:
+        return sum(s.informed for s in self.stats)
 
 
 class SIIClient:
@@ -108,8 +143,16 @@ class SIIClient:
 
     # ----- 4) Envío del sobre -----
     UPLOAD_PATH = "/cgi_dte/UPL/DTEUpload"
-    # El SII rechaza el upload si no hay User-Agent.
-    _USER_AGENT = "Mozilla/4.0 (compatible; dte_chile 0.1; Windows)"
+    # El CGI de upload FILTRA por User-Agent: sólo procesa el formato que el SII
+    # documenta para sistemas propios. Con cualquier otro —incluido el de un
+    # navegador real— devuelve una página HTML de error genérica que no dice por
+    # qué, y el envío nunca llega a validarse. Verificado contra Maullín.
+    _USER_AGENT_TEMPLATE = "Mozilla/4.0 (compatible; PROG 1.0; Windows NT 5.0; {rut})"
+
+    @classmethod
+    def user_agent(cls, sender_rut: str) -> str:
+        """User-Agent en el formato que exige el SII, con el RUT de quien envía."""
+        return cls._USER_AGENT_TEMPLATE.format(rut=sender_rut)
 
     def send_dte(self, envelope_xml: bytes, issuer_rut: str, sender_rut: str) -> SubmissionResult:
         """Sube el sobre EnvioDTE al SII (DTEUpload) y devuelve el TrackID."""
@@ -132,7 +175,7 @@ class SIIClient:
             resp = self.session.post(
                 f"{self.environment.host}{self.UPLOAD_PATH}",
                 files=files,  # type: ignore[arg-type]  # tuplas multipart heterogéneas
-                headers={"User-Agent": self._USER_AGENT},
+                headers={"User-Agent": self.user_agent(sender_rut)},
                 cookies={"TOKEN": self._token},
                 timeout=self._timeout,
             )
@@ -165,14 +208,63 @@ class SIIClient:
         response = self._soap_call(
             self.QUERY_SVC,
             "getEstUp",
-            {"Rut": issuer_body, "Dv": issuer_dv, "TrackId": str(track_id), "Token": self._token},
+            # Los nombres salen del WSDL (QueryEstUp.jws?WSDL): el servicio es
+            # Axis RPC y liga los parámetros por nombre, no por posición.
+            {
+                "RutCompania": issuer_body,
+                "DvCompania": issuer_dv,
+                "TrackId": str(track_id),
+                "Token": self._token,
+            },
         )
         status, _ = _parse_response(response, "ESTADO")
-        label_node = etree.fromstring(
-            response.encode("utf-8") if isinstance(response, str) else response
-        ).find(".//{*}GLOSA")
+        tree = etree.fromstring(response.encode("utf-8") if isinstance(response, str) else response)
+        label_node = tree.find(".//{*}GLOSA")
         label = label_node.text if label_node is not None else ""
-        return SubmissionResult(track_id=track_id, status=status or "?", detail=label or response)
+        return SubmissionResult(
+            track_id=track_id,
+            status=status or "?",
+            detail=label or response,
+            stats=_parse_stats(tree),
+        )
+
+
+def _parse_stats(tree) -> list[DocTypeStats]:
+    """Lee el desglose por tipo de documento de la respuesta de QueryEstUp.
+
+    El SII lo devuelve **plano**: dentro de ``RESP_BODY`` van TIPO_DOCTO,
+    INFORMADOS, ACEPTADOS, RECHAZADOS y REPAROS repetidos uno tras otro, sin
+    ningún elemento que agrupe cada tanda. Su documentación describe un
+    ``ESTADISTICA`` que envuelve cada grupo; la respuesta real de Maullín no lo
+    trae. Se recorre en orden de documento y cada TIPO_DOCTO abre un grupo
+    nuevo, lo que sirve para las dos formas.
+    """
+    CAMPOS = {
+        "INFORMADOS": "informed",
+        "ACEPTADOS": "accepted",
+        "RECHAZADOS": "rejected",
+        "REPAROS": "flagged",
+    }
+
+    def entero(texto: str | None) -> int:
+        try:
+            return int((texto or "").strip())
+        except ValueError:
+            return 0
+
+    salida: list[DocTypeStats] = []
+    actual: DocTypeStats | None = None
+    for nodo in tree.iter():
+        etiqueta = str(nodo.tag).rsplit("}", 1)[-1]
+        if etiqueta == "TIPO_DOCTO":
+            tipo = entero(nodo.text)
+            if not tipo:
+                continue
+            actual = DocTypeStats(doc_type=tipo)
+            salida.append(actual)
+        elif actual is not None and etiqueta in CAMPOS:
+            setattr(actual, CAMPOS[etiqueta], entero(nodo.text))
+    return salida
 
 
 def _build_soap_envelope(operation: str, params: dict) -> bytes:
