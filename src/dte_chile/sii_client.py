@@ -266,7 +266,7 @@ class SIIClient:
         doc_type: int | str,
         folio: int | str,
         issue_date: _dt.date,
-        total_amount: int | str,
+        total_amount: int | str | float,
         querier_rut: str | None = None,
     ) -> DocumentStatus:
         """Estado de un documento concreto ante el SII, con su glosa.
@@ -305,7 +305,9 @@ class SIIClient:
                 "FolioDte": str(int(folio)),
                 # El SII espera dd-mm-aaaa acá, no el ISO del documento.
                 "FechaEmisionDte": issue_date.strftime("%d-%m-%Y"),
-                "MontoDte": str(int(total_amount)),
+                # Tal cual lo declara el documento, con decimales si los tiene: en el
+                # WSDL es un string y el SII compara contra lo registrado.
+                "MontoDte": str(total_amount).strip(),
                 "Token": self._token,
             },
         )

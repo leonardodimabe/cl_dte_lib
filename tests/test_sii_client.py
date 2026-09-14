@@ -136,3 +136,41 @@ def test_la_consulta_por_documento_arma_los_parametros_del_wsdl(monkeypatch):
     assert estado.status == "DOK"
     assert estado.label == "Documento Recibido"
     assert estado.error_label == "Monto IVA distinto al calculado"
+
+
+def test_el_monto_de_la_consulta_conserva_sus_decimales(monkeypatch):
+    """Un documento en moneda extranjera lleva decimales y el SII los compara.
+
+    Forzarlo a entero —se probó redondeando y truncando— daba DNK «Datos NO
+    Coinciden» exactamente en los documentos con decimales, mientras que los de
+    monto entero coincidían. En el WSDL `MontoDte` es un string, no un entero.
+    """
+    import datetime as dt
+
+    from dte_chile.certificate import Certificate
+    from dte_chile.sii_client import Environment, SIIClient
+
+    cliente = SIIClient(
+        Certificate(private_key_pem=b"", cert_pem=b"", rut="12291733-9"),
+        Environment.CERTIFICATION,
+    )
+    cliente._token = "T"
+    visto = {}
+
+    def _falso(service, operation, params):
+        visto.update(params)
+        return (
+            '<?xml version="1.0"?><SII:RESPUESTA xmlns:SII="http://www.sii.cl/XMLSchema">'
+            "<SII:RESP_BODY><ESTADO>DOK</ESTADO></SII:RESP_BODY></SII:RESPUESTA>"
+        )
+
+    monkeypatch.setattr(cliente, "_soap_call", _falso)
+    cliente.query_document(
+        issuer_rut="77262159-0",
+        receiver_rut="55555555-5",
+        doc_type=110,
+        folio=7,
+        issue_date=dt.date(2026, 9, 14),
+        total_amount="160677.62",
+    )
+    assert visto["MontoDte"] == "160677.62"
