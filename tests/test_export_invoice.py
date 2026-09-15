@@ -123,7 +123,14 @@ def _case_5038176_1():
 
 
 def _case_5038177_2():
-    """Dos líneas, una con 5% de descuento, y recargo global por comisiones."""
+    """Dos líneas, una con 5% de descuento, y recargo global por comisiones.
+
+    Es el caso real que el SII objetó (folio 8, set 5038177): el descuento de
+    la línea 1 va como ``DscRcgGlobal`` de tipo "D", no restado del
+    ``MontoItem``, y el grupo de bultos lleva ``IdContainer``/``Sello`` —el
+    SII los exige aunque el XSD los declare opcionales, con «(HED-2-804)
+    Exportacion : Campo obligatorio».
+    """
     return _document(
         [
             ExportItem(
@@ -148,12 +155,30 @@ def _case_5038177_2():
             freight="115.14",
             insurance="15.95",
             total_packages=24,
+            packages=[
+                PackageGroup(
+                    kind_code=code_for(PACKAGE_TYPES, "CAJAS DE CARTON"),
+                    quantity=24,
+                    marks="CHATARRA DE ALUMINIO",
+                    container_id="TCLU1234567",
+                    seal="SL-4471209",
+                )
+            ],
             receiver_country=code_for(COUNTRIES, "ALEMANIA"),
             destination_country=code_for(COUNTRIES, "ALEMANIA"),
         ),
         global_charges=[
             GlobalDiscount(value=Decimal("115.14"), kind="R", value_type="$", reason="FLETE"),
             GlobalDiscount(value=Decimal("15.95"), kind="R", value_type="$", reason="SEGURO"),
+            GlobalDiscount(
+                value=Decimal("91.43"), kind="R", value_type="$", reason="COMISIONES EN EL EXTERIOR"
+            ),
+            GlobalDiscount(
+                value=Decimal("1362.30"),
+                kind="D",
+                value_type="$",
+                reason="DESCUENTO LINEA 1 (5% CAJAS CIRUELAS)",
+            ),
         ],
     )
 
@@ -184,10 +209,19 @@ def test_amounts_keep_their_decimals():
     assert item.line_amount == Decimal("13893.39")
 
 
-def test_line_discount_is_applied_on_the_decimal_amount():
+def test_line_discount_does_not_touch_the_amount_when_price_and_qty_are_given():
+    """El caso 5038177-2, folio con reparo real del SII.
+
+    Con cantidad y precio presentes, el SII contrasta MontoItem contra
+    PrcItem × QtyItem literal: «(DET L[1] -2-200) REPARO- Valor Detalle
+    Distinto a Precio * Cantidad : [25883.0000] <> [27246.0000]». Restar el
+    5% de descuento del MontoItem —lo que hacía antes— es lo que producía el
+    reparo. El descuento, si debe afectar el total, va como recargo/descuento
+    global (``DscRcgGlobal``), no descontado de la línea.
+    """
     item = ExportItem("A", quantity=239, unit_price=114, discount_pct=5)
     assert item.gross_amount == Decimal("27246")
-    assert item.line_amount == Decimal("25883.70")
+    assert item.line_amount == Decimal("27246")
 
 
 def test_export_totals_have_no_vat():
@@ -201,8 +235,21 @@ def test_export_totals_have_no_vat():
 
 def test_case_5038177_2_totals():
     doc = _case_5038177_2()
-    assert doc.base_amount == Decimal("25883.70") + Decimal("10168")
-    assert doc.total_amount == doc.base_amount + Decimal("115.14") + Decimal("15.95")
+    # base_amount suma MontoItem SIN descontar: 239×114 + 164×62.
+    assert doc.base_amount == Decimal("27246") + Decimal("10168")
+    # El total sí lo descuenta, pero como recargo/descuento global: flete +
+    # seguro + comisiones - el 5% de la línea 1 (1362.30), que es justo lo que
+    # el SII confirmó como correcto: «(HED-2-220) ... : [36274.2200] <>
+    # [37636.5200]» — 37636.52 es base + recargos sin el descuento; 36274.22,
+    # con el descuento global aplicado, es el monto que el documento cobra.
+    assert doc.total_amount == (
+        doc.base_amount
+        + Decimal("115.14")
+        + Decimal("15.95")
+        + Decimal("91.43")
+        - Decimal("1362.30")
+    )
+    assert doc.total_amount == Decimal("36274.22")
 
 
 # --------------------------------------------------------------------------- #
@@ -294,8 +341,26 @@ def test_line_discount_and_unit_reach_the_xml(cert, caf_factory):
     root = build_export(_case_5038177_2(), caf_factory(110), TS)
     detail = root.find("Detalle")
     assert detail.findtext("UnmdItem") == "KN"
+    # DescuentoPct queda como dato informativo; MontoItem no lo resta —el SII
+    # lo contrasta contra PrcItem × QtyItem literal.
     assert detail.findtext("DescuentoPct") == "5"
-    assert detail.findtext("MontoItem") == "25883.7"
+    assert detail.findtext("MontoItem") == "27246"
+
+
+def test_container_and_seal_reach_the_xml(cert, caf_factory):
+    """(HED-2-804) Exportacion : Campo obligatorio : Sello / Id. Container."""
+    root = build_export(_case_5038177_2(), caf_factory(110), TS)
+    group = root.find("Encabezado/Transporte/Aduana/TipoBultos")
+    assert group.findtext("IdContainer") == "TCLU1234567"
+    assert group.findtext("Sello") == "SL-4471209"
+
+
+def test_discount_global_charge_reaches_the_xml(cert, caf_factory):
+    root = build_export(_case_5038177_2(), caf_factory(110), TS)
+    charges = root.findall("DscRcgGlobal")
+    discount = [c for c in charges if c.findtext("TpoMov") == "D"]
+    assert len(discount) == 1
+    assert discount[0].findtext("ValorDR") == "1362.3"
 
 
 def test_no_customs_block_when_absent(cert, caf_factory):

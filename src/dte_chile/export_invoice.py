@@ -87,13 +87,22 @@ class ExportItem:
 
     @property
     def line_amount(self) -> Decimal:
-        """MontoItem: bruto con su descuento o recargo de línea aplicado.
+        """MontoItem: lo que el SII puede recalcular, no lo que arma esta línea.
 
-        ``amount`` reemplaza a cantidad × precio como **base**, no al monto
-        final: una línea que informa su valor y además un recargo debe salir
-        con el recargo dentro. Declarar ``RecargoPct`` y no sumarlo dejaba el
-        MontoItem contradiciendo su propio porcentaje.
+        Cuando la línea trae cantidad **y** precio, el SII exige que MontoItem
+        sea exactamente ``PrcItem × QtyItem`` — el reparo «(DET L[n] -2-200)
+        Valor Detalle Distinto a Precio * Cantidad» lo compara literal, sin
+        restar el descuento ni sumar el recargo. Ahí ``DescuentoPct``/
+        ``RecargoPct`` quedan sólo informativos; si el descuento debe afectar
+        el total del documento, va como ``DscRcgGlobal`` (ver
+        ``ExportDocument.global_charges``), no descontado del detalle.
+
+        Cuando la línea informa su total directo (``amount``, sin cantidad ×
+        precio con que el SII pueda contradecirlo) sí corresponde aplicar el
+        descuento o recargo sobre esa base: no hay nada que cuadre distinto.
         """
+        if self.quantity is not None and self.unit_price is not None:
+            return self.gross_amount
         total = self.gross_amount
         if self.discount_pct:
             total -= total * self.discount_pct / 100
