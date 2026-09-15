@@ -122,7 +122,25 @@ class Settlement:
 
     @property
     def commission_vat(self) -> int:
-        return sum(c.vat for c in self.commissions)
+        """IVA total de las comisiones: la tasa sobre el neto TOTAL.
+
+        Lo dice la validación 38 del SII, literal: «Para las liquidaciones
+        factura, el IVA de las Comisiones debe ser igual a la tasa del IVA
+        (19%) por el Valor Neto de las Comisiones».
+
+        Se redondea una sola vez sobre el total y no se suman los redondeos de
+        cada comisión, porque no es lo mismo: con 630 y -2197, línea a línea da
+        120 y -417 —correctos por separado— que suman -297, mientras la tasa
+        sobre el neto total (-1567) da -297,73, o sea -298. El SII lo reportó
+        así: «Reparo en Calculo de [ValComIVA] T:[43]-F:[4]». Y el error crece
+        con el número de comisiones.
+
+        Si el llamador fija el IVA de alguna comisión a mano, manda él: estará
+        declarando algo que no se deduce de la tasa.
+        """
+        if any(c.vat_amount is not None for c in self.commissions):
+            return sum(c.vat for c in self.commissions)
+        return round(self.commission_net * VAT_RATE / 100)
 
     @property
     def total_amount(self) -> int:

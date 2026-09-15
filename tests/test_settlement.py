@@ -172,7 +172,25 @@ def test_case_4_handles_a_negative_commission():
     assert s.total_amount > s.net_amount + s.exempt_amount + s.vat
 
 
+def test_commission_vat_is_the_rate_over_the_total_net():
+    """Validación 38 del SII, literal: «Para las liquidaciones factura, el IVA
+    de las Comisiones debe ser igual a la tasa del IVA (19%) por el Valor Neto
+    de las Comisiones».
+
+    No es lo mismo que sumar el IVA de cada comisión: 630 y -2197 dan 120 y
+    -417 —bien redondeados por separado— que suman -297, mientras la tasa sobre
+    el neto total (-1567) da -297,73, o sea -298. El SII lo reportó en el libro
+    de ventas del set 5038178: «Reparo en Calculo de [ValComIVA] T:[43]-F:[4]».
+    """
+    s = _case_4()
+    assert s.commission_net == -1567
+    assert s.commission_vat == -298
+    # Y no el -297 de sumar los redondeos de cada comisión.
+    assert sum(c.vat for c in s.commissions) == -297
+
+
 def test_commission_vat_can_be_given_explicitly():
+    """Si el llamador lo fija a mano manda él: declara algo que no sale de la tasa."""
     s = _settlement([_line("33", "A", 1000)], [Commission("COMISION", 1000, vat_amount=123)])
     assert s.commission_vat == 123
 
