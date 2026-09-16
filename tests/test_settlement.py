@@ -118,15 +118,22 @@ def _case_3():
 
 
 def _case_4():
-    """Liquida una liquidación anterior, en negativo, y una comisión negativa."""
+    """Liquida una liquidación anterior, en negativo, y una comisión negativa.
+
+    Los TpoDocLiq son los del envío que el SII aprobó (SOK, set 5038178): el
+    anticipo va con 99 —no liquida ningún documento—, las facturas y la nota de
+    crédito sin «ELECTRÓNICA» en el nombre son en papel (30 y 60), y las que la
+    llevan, electrónicas (33 y 43). Con 33 en el anticipo el SII respondió «Los
+    Valores de la Linea 1 del Detalle No Cuadran».
+    """
     return _settlement(
         [
-            _line("33", "NETO ANTICIPO FACTURACION", 550000, 78),
-            _line("33", "NETO FACTURAS", 98625, 14),
-            _line("33", "EXENTO FACTURAS", 208950, 15, exempt=True),
+            _line("99", "NETO ANTICIPO FACTURACION", 550000, 78),
+            _line("30", "NETO FACTURAS", 98625, 14),
+            _line("30", "EXENTO FACTURAS", 208950, 15, exempt=True),
             _line("33", "NETO FACTURAS ELECTRONICAS", 34828, 12),
             _line("33", "EXENTO FACTURAS ELECTRONICAS", 402028, 4, exempt=True),
-            _line("61", "NETO NOTA DE CREDITO 1981", -31286, 1),
+            _line("60", "NETO NOTA DE CREDITO 1981", -31286, 1),
             _line("43", "NETO LIQUIDACION FACTURA ELECTRONICA 4554", -43935, 1),
             _line("43", "EXENTO LIQUIDACION FACTURA ELECTRONICA 4554", -44226, 1, exempt=True),
         ],
@@ -337,3 +344,15 @@ def test_signature_verifies(cert, caf_factory):
     xml = serialize_envelope(build_envelope([signed], cover, cert, TS))
     results = signer.verify_signatures(etree.fromstring(xml))
     assert results and all(results)
+
+
+def test_el_anticipo_se_liquida_con_tipo_99(cert, caf_factory):
+    """«99 en caso de anticipo u otras transacciones», formato del SII.
+
+    El motor no valida el código —cualquier cosa de 1 a 3 caracteres cabe en el
+    XSD—, así que lo que protege es que llegue tal cual al XML.
+    """
+    root = build_settlement(_case_4(), caf_factory(43), TS)
+    primera = root.find("Detalle")
+    assert primera.findtext("NmbItem") == "NETO ANTICIPO FACTURACION"
+    assert primera.findtext("TpoDocLiq") == "99"
