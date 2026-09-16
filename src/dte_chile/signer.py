@@ -139,10 +139,42 @@ def _populate_rsa_key_value(signature_node: etree._Element, cert_pem: bytes) -> 
     )
 
 
+#: Cuántas veces se vuelve a firmar un <DTE> cuya firma no verifica.
+_REINTENTOS_FIRMA = 2
+
+
 def sign_document(document: etree._Element, cert: Certificate) -> etree._Element:
-    """Devuelve el <DTE> firmado (enveloped XMLDSig sobre el <Documento>)."""
-    dte = wrap_dte(document)
-    return sign_enveloped(dte, document, cert)
+    """Devuelve el <DTE> firmado, con la firma ya comprobada.
+
+    Firmar y no mirar el resultado costó un rechazo del SII —`(DTE-3-505) Firma
+    DTE Incorrecta` en uno de los tres documentos de un sobre de exportación,
+    con el mismo contenido que había firmado bien el día anterior y que vuelve a
+    firmar bien al reintentarlo—. El documento ya tiene su folio y su timbre
+    cuando llega aquí, así que **volver a firmarlo no gasta nada**: sólo
+    recalcula la firma sobre el mismo contenido.
+
+    Si tras los reintentos sigue sin verificar, se aborta. Es preferible fallar
+    al emitir, con el folio ya gastado pero sabiendo cuál es el documento, que
+    mandar al SII un sobre que va a rechazar: eso cuesta además el intento y un
+    día de espera hasta su respuesta.
+
+    La verificación aísla el <DTE>, que es como lo comprueba el Servicio.
+    """
+    for intento in range(1, _REINTENTOS_FIRMA + 2):
+        dte = sign_enveloped(wrap_dte(document), document, cert)
+        # Sobre una copia: `verify_signatures` aísla el nodo y no debe tocar el
+        # árbol que se devuelve.
+        if verify_signatures(etree.fromstring(etree.tostring(dte)))[0]:
+            return dte
+        # Quitar la firma que no sirvió antes de volver a intentarlo.
+        for firma in document.findall("{%s}Signature" % NS_DSIG):
+            document.remove(firma)
+    folio = document.findtext(".//{%s}Folio" % NS_DTE) or "?"
+    tipo = document.findtext(".//{%s}TipoDTE" % NS_DTE) or "?"
+    raise ValueError(
+        f"la firma del documento tipo {tipo} folio {folio} no verifica tras"
+        f" {_REINTENTOS_FIRMA + 1} intentos: el SII lo rechazaría con DTE-3-505."
+    )
 
 
 def sign_set_dte(

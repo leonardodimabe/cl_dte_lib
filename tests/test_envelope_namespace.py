@@ -160,3 +160,42 @@ def test_el_sobre_declara_iso_8859_1(sobre):
     """La reposición se hace sobre bytes: no puede alterar la cabecera."""
     assert sobre.startswith(b'<?xml version="1.0" encoding="ISO-8859-1"?>')
     assert "VIÑEDOS".encode("ISO-8859-1") in sobre
+
+
+# --------------------------------------------------------------------------- #
+#  La firma se comprueba antes de devolverla
+# --------------------------------------------------------------------------- #
+def test_una_firma_que_no_verifica_se_repite(monkeypatch, cert, caf_factory):
+    """Firmar y no mirar el resultado costó un rechazo del SII.
+
+    `(DTE-3-505) Firma DTE Incorrecta` en UNO de los tres documentos de un sobre
+    de exportación, con el mismo contenido que había firmado bien el día
+    anterior y que vuelve a firmar bien al reintentarlo. El documento ya trae su
+    folio y su timbre, así que volver a firmarlo no gasta nada.
+    """
+    from dte_chile import signer
+
+    real = signer.verify_signatures
+    llamadas = []
+
+    def falla_la_primera(nodo):
+        llamadas.append(1)
+        return [False] if len(llamadas) == 1 else real(nodo)
+
+    monkeypatch.setattr(signer, "verify_signatures", falla_la_primera)
+    dte = signer.sign_document(build_document(_factura(9, 'CLIENTE'), caf_factory(33), TS), cert)
+
+    assert len(llamadas) == 2, "debió volver a firmar tras la primera comprobación fallida"
+    # Y lo que devuelve lleva UNA sola firma, no la mala más la buena.
+    assert len(dte.findall("{%s}Signature" % NS_DSIG)) == 1
+    assert real(dte)[0] is True
+
+
+def test_si_la_firma_nunca_verifica_se_aborta(monkeypatch, cert, caf_factory):
+    """Mejor fallar al emitir que mandar al SII un sobre que va a rechazar:
+    eso cuesta además el intento y un día de espera hasta su respuesta."""
+    from dte_chile import signer
+
+    monkeypatch.setattr(signer, "verify_signatures", lambda nodo: [False])
+    with pytest.raises(ValueError, match="DTE-3-505"):
+        signer.sign_document(build_document(_factura(9, 'CLIENTE'), caf_factory(33), TS), cert)
