@@ -45,7 +45,13 @@ MAX_COMMISSIONS = 20
 class SettlementLine:
     """Una línea del detalle: qué se liquida y por cuánto."""
 
-    liquidated_type: str  # TpoDocLiq (máx. 3 caracteres: "33", "39", "61", "43"...)
+    # TpoDocLiq (máx. 3 caracteres): el código del documento que se liquida —
+    # "30" factura, "33" factura electrónica, "35" boleta, "60" nota de crédito,
+    # "43" liquidación factura…—, y **"99" para un anticipo u otra transacción
+    # que no sea un documento**. Lo fija el formato del SII: «Se debe registrar
+    # código de documento válido, (electrónico o manual) o 99 en caso de
+    # anticipo u otras transacciones».
+    liquidated_type: str
     name: str  # NmbItem
     amount: int  # MontoItem; puede ser negativo
     quantity: float | None = None  # QtyItem
