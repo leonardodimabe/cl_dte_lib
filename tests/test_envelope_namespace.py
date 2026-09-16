@@ -17,7 +17,7 @@ from lxml import etree
 from dte_chile.envelope import Cover, build_envelope
 from dte_chile.envelope import serialize as serialize_envelope
 from dte_chile.models import DTE, DTEType, Issuer, Item, Receiver
-from dte_chile.signer import sign_document
+from dte_chile.signer import sign_document, verify_signatures
 from dte_chile.xml_builder import build_document
 
 TS = dt.datetime(2026, 9, 14, 11, 36, 0)
@@ -199,3 +199,41 @@ def test_si_la_firma_nunca_verifica_se_aborta(monkeypatch, cert, caf_factory):
     monkeypatch.setattr(signer, "verify_signatures", lambda nodo: [False])
     with pytest.raises(ValueError, match="DTE-3-505"):
         signer.sign_document(build_document(_factura(9, 'CLIENTE'), caf_factory(33), TS), cert)
+
+
+# --------------------------------------------------------------------------- #
+#  El corte en líneas no entra en lo ya firmado
+# --------------------------------------------------------------------------- #
+def test_el_corte_en_lineas_no_toca_un_dte_ya_firmado(cert, caf_factory):
+    """`wrap_long_lines` debe dejar intacto lo que ya lleva firma.
+
+    El corte reparte en líneas lo que pasa de 4.000 caracteres, y tiene que
+    ocurrir ANTES de firmar: el espacio en blanco es contenido para la
+    canonicalización. Pero al firmar el <SetDTE> la misma función recorre un
+    sobre lleno de <DTE> YA firmados, y descender dentro de uno le mueve el
+    digest.
+
+    Costó tres emisiones. El SII devolvió «(DTE-3-505) Firma DTE Incorrecta» en
+    uno de los tres documentos de un sobre de exportación —el único cuyo
+    <Documento> quedaba cerca del límite— y aceptó los otros dos. El contenido
+    era correcto y el mismo documento firmaba bien por separado.
+    """
+    from dte_chile.validation import wrap_long_lines
+
+    dte = sign_document(build_document(_factura(1, "CLIENTE"), caf_factory(33), TS), cert)
+    antes = etree.tostring(dte, with_tail=False)
+    assert verify_signatures(dte)[0], "el DTE debe firmar bien antes de la prueba"
+
+    # Un padre grande, como el <SetDTE> de un sobre: fuerza el reparto en líneas.
+    padre = etree.SubElement(etree.Element("SetDTE"), "x")  # placeholder
+    padre = padre.getparent()
+    padre.remove(padre[0])
+    padre.append(dte)
+    etree.SubElement(padre, "Relleno").text = "x" * 5000
+
+    wrap_long_lines(padre)
+
+    assert etree.tostring(dte, with_tail=False) == antes, (
+        "el corte en líneas entró dentro de un DTE ya firmado y le movió el digest"
+    )
+    assert verify_signatures(dte)[0], "la firma dejó de valer tras armar el sobre"

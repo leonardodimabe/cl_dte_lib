@@ -82,6 +82,11 @@ def serialize_document(element: etree._Element) -> bytes:
     return xml
 
 
+def _ya_firmado(node: etree._Element) -> bool:
+    """True si este elemento lleva una firma XMLDSig entre sus hijos."""
+    return any(hijo.tag == "{http://www.w3.org/2000/09/xmldsig#}Signature" for hijo in node)
+
+
 def wrap_long_lines(node: etree._Element, max_len: int = MAX_LINE_LENGTH) -> None:
     """Corta en líneas las ramas cuya serialización sería demasiado larga.
 
@@ -93,12 +98,27 @@ def wrap_long_lines(node: etree._Element, max_len: int = MAX_LINE_LENGTH) -> Non
     Hay que llamarlo **antes de firmar**: el espacio en blanco es contenido para
     la canonicalización, así que añadirlo después movería el digest y la firma
     dejaría de valer.
+
+    Y por lo mismo **no entra en lo que ya está firmado**. Al firmar el <SetDTE>
+    esta función recorre un sobre lleno de <DTE> ya firmados: repartirlos en
+    líneas es inofensivo —el tail de un elemento queda fuera de su propio
+    digest— pero descender dentro de uno y separar los hijos de su <Documento>
+    le mueve el digest y lo invalida.
+
+    Pasó de verdad, y tardó en verse porque es un problema de FRONTERA. El caso
+    2 del set de exportación medía 4.070 bytes: por encima del límite, así que
+    se cortaba antes de firmar y todo cuadraba. Al quitarle un descuento global
+    —que el SII pedía— bajó a 3.897, dejó de cortarse antes... y el sobre se lo
+    cortó después. El SII lo rechazó con «(DTE-3-505) Firma DTE Incorrecta», uno
+    de tres documentos, con el mismo contenido que el día anterior había pasado.
     """
     if len(etree.tostring(node, encoding="ISO-8859-1")) <= max_len:
         return
     for hijo in node:
         if not (hijo.tail or "").endswith("\n"):
             hijo.tail = (hijo.tail or "") + "\n"
+        if _ya_firmado(hijo):
+            continue
         wrap_long_lines(hijo, max_len)
 
 
