@@ -48,7 +48,9 @@ def caf_factory():
 
     from dte_chile.caf import CAF, load_caf_bytes
 
-    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    # Los CAF del SII usan 512 bits; 1024 es lo mínimo que genera cryptography.
+    # Con 2048 la RSAPK y el FRMT ya no caben en el PDF417 del impreso.
+    key = rsa.generate_private_key(public_exponent=65537, key_size=1024)
     private_pem = key.private_bytes(
         serialization.Encoding.PEM,
         serialization.PrivateFormat.TraditionalOpenSSL,
@@ -72,9 +74,12 @@ def caf_factory():
         etree.SubElement(rng, "D").text = str(folio_from)
         etree.SubElement(rng, "H").text = str(folio_to)
         etree.SubElement(da, "FA").text = "2026-01-01"
+        # La llave pública de verdad: el SII verifica el timbre con la RSAPK que
+        # va dentro del DD, y los tests tienen que poder hacer lo mismo.
+        numbers = key.public_key().public_numbers()
         pk = etree.SubElement(da, "RSAPK")
-        etree.SubElement(pk, "M").text = "eA=="
-        etree.SubElement(pk, "E").text = "Aw=="
+        etree.SubElement(pk, "M").text = _b64_int(numbers.n)
+        etree.SubElement(pk, "E").text = _b64_int(numbers.e)
         etree.SubElement(da, "IDK").text = "100"
         etree.SubElement(caf, "FRMA", algoritmo="SHA1withRSA").text = "eA=="
         etree.SubElement(root, "RSASK").text = private_pem
@@ -82,3 +87,9 @@ def caf_factory():
         return load_caf_bytes(etree.tostring(root))
 
     return _make
+
+
+def _b64_int(value: int) -> str:
+    import base64
+
+    return base64.b64encode(value.to_bytes((value.bit_length() + 7) // 8, "big")).decode()

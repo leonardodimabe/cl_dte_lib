@@ -30,8 +30,10 @@ from __future__ import annotations
 
 import base64
 import datetime as _dt
+import re
 from typing import TYPE_CHECKING
 
+from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 from lxml import etree
@@ -109,9 +111,55 @@ def _sign_dd(dd: etree._Element, rsa_private_key_pem: str) -> str:
 
 
 def _text(parent: etree._Element, tag: str, value: str) -> etree._Element:
+    """Agrega una etiqueta del DD. Vacía, queda como ``<RSR/>`` desde el inicio.
+
+    Con ``text = ""`` lxml firma ``<RSR></RSR>``, pero en cuanto el documento se
+    reserializa y se vuelve a leer —al armar el sobre— el texto vacío pasa a ser
+    ``None`` y sale ``<RSR/>``. El SII verifica el timbre sobre el texto que
+    recibe, y respondió «Firma Timbre Electrónico Incorrecta» en las cinco
+    boletas del set: la boleta al consumidor final no trae razón social.
+    """
     node = etree.SubElement(parent, tag)
-    node.text = value
+    node.text = value or None
     return node
+
+
+#: Cada <TED> del texto transmitido, y sus partes.
+_TED_EN_TEXTO = re.compile(rb"<TED[\s>].*?</TED>", re.S)
+_DD_EN_TEXTO = re.compile(rb"<DD>.*?</DD>", re.S)
+_FRMT_EN_TEXTO = re.compile(rb"<FRMT[^>]*>(.*?)</FRMT>", re.S)
+_RSAPK_EN_TEXTO = re.compile(rb"<RSAPK>\s*<M>(.*?)</M>\s*<E>(.*?)</E>", re.S)
+
+
+def verify_stamps(xml: bytes) -> list[bool]:
+    """Verifica cada timbre **sobre los bytes que se transmiten**.
+
+    El SII toma el <DD> tal como viene escrito y comprueba el FRMT con la llave
+    pública del CAF que va dentro del propio DD. Verificar sobre un árbol no
+    sirve: lxml da por iguales ``<RSR/>`` y ``<RSR></RSR>``, y la firma no.
+
+    El documento debe estar serializado en ISO-8859-1, que es como se firma el
+    DD (ver :func:`dd_bytes`) y como se transmiten los sobres.
+    """
+    results = []
+    for ted in _TED_EN_TEXTO.findall(xml):
+        dd = _DD_EN_TEXTO.search(ted)
+        frmt = _FRMT_EN_TEXTO.search(ted)
+        rsapk = _RSAPK_EN_TEXTO.search(dd.group(0)) if dd else None
+        if not (dd and frmt and rsapk):
+            results.append(False)
+            continue
+        modulus = int.from_bytes(base64.b64decode(rsapk.group(1)), "big")
+        exponent = int.from_bytes(base64.b64decode(rsapk.group(2)), "big")
+        public_key = rsa.RSAPublicNumbers(exponent, modulus).public_key()
+        try:
+            public_key.verify(
+                base64.b64decode(frmt.group(1)), dd.group(0), padding.PKCS1v15(), hashes.SHA1()
+            )
+            results.append(True)
+        except InvalidSignature:
+            results.append(False)
+    return results
 
 
 def _clone(node: etree._Element) -> etree._Element:

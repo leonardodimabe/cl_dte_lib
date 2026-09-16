@@ -156,6 +156,13 @@ def test_la_firma_del_sobre_valida_con_el_sobre_entero(sobre):
     ctx.verify(firma)
 
 
+def test_los_timbres_validan_tal_como_viajan(sobre):
+    """El timbre de una factura con «Ñ» en la razón social, sobre los bytes."""
+    from dte_chile.ted import verify_stamps
+
+    assert verify_stamps(sobre) == [True, True]
+
+
 def test_el_sobre_declara_iso_8859_1(sobre):
     """La reposición se hace sobre bytes: no puede alterar la cabecera."""
     assert sobre.startswith(b'<?xml version="1.0" encoding="ISO-8859-1"?>')

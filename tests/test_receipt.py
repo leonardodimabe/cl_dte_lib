@@ -258,6 +258,28 @@ def test_signatures_hold_as_transmitted(cert, caf_factory):
     assert signer.verify_transmitted(xml) == [True] * 6
 
 
+def test_stamps_hold_as_transmitted(cert, caf_factory):
+    """El timbre se verifica sobre el <DD> tal como viaja.
+
+    La boleta al consumidor final no trae razón social: el DD se firmaba con
+    ``<RSR></RSR>`` y viajaba con ``<RSR/>``. El SII aceptó las cinco boletas
+    del set con reparo «Firma Timbre Electrónico Incorrecta» (TrackID 32169796).
+    """
+    from dte_chile.ted import verify_stamps
+
+    xml = _envelope(_set_receipts(), cert, caf_factory)
+    assert b"<RSR/>" in xml
+    assert verify_stamps(xml) == [True] * 5
+
+
+def test_stamp_check_catches_a_dd_that_changed_after_signing(cert, caf_factory):
+    """Lo que devolvió el SII: la misma forma vacía, escrita distinto."""
+    from dte_chile.ted import verify_stamps
+
+    xml = _envelope(_set_receipts()[:1], cert, caf_factory)
+    assert verify_stamps(xml.replace(b"<RSR/>", b"<RSR></RSR>")) == [False]
+
+
 def test_transmitted_check_catches_a_receipt_without_namespace(cert, caf_factory):
     """El sobre que el SII rechazó: el árbol lo daba por bueno; el texto, no."""
     from dte_chile.validation import serialize_document
