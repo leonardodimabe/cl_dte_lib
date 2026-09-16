@@ -107,7 +107,7 @@ def _set_5038172_lines():
             net_amount=10215,
             vat_amount=_vat(10215),
             retained_total_vat=_vat(10215),
-            total_amount=10215 + _vat(10215),
+            total_amount=10215,
         ),
         # Nota de crédito por descuento a la factura electrónica 32.
         BookLine(
@@ -209,17 +209,20 @@ def test_a_purchase_invoice_declares_the_retained_vat(cert):
     quien la emitió. Omitirlo costó un rechazo del set 5038172: «El Monto Total
     No Cuadra / No Informa Adecuadamente IVA Retenido Total».
 
-    El total NO se descuenta: el SII lo dijo al probarlo. Con la retención
-    declarada y el total bajado al neto respondió «Reparo en Calculo de
-    [MntTotal] T:[46]-F:[9]»; con la retención declarada y el total en
-    neto + IVA, quedó conforme. La retención se informa, pero el monto total
-    del documento sigue siendo lo facturado.
+    El total SÍ baja al neto. Lo fija el ejemplo del SII en «Ejemplos de
+    Registro de Documentos en la IECV», con sus propias cifras:
+
+        Neto 75.000 · 19% IVA a retener 14.250 · menos 19% IVA retenido 14.250
+        Total 75.000
+
+        <MntNeto>75000</MntNeto><MntIVA>14250</MntIVA>
+        <IVARetTotal>14250</IVARetTotal><MntTotal>75000</MntTotal>
     """
     book = _build(cert)
     detail = [d for d in book.iter(f"{NS}Detalle") if d.findtext(f"{NS}NroDoc") == "9"][0]
     assert detail.findtext(f"{NS}MntIVA") == str(_vat(10215))
     assert detail.findtext(f"{NS}IVARetTotal") == str(_vat(10215))
-    assert detail.findtext(f"{NS}MntTotal") == str(10215 + _vat(10215))
+    assert detail.findtext(f"{NS}MntTotal") == "10215"
 
     totals = _totals_for(book, 46)
     assert totals.findtext(f"{NS}TotIVARetTotal") == str(_vat(10215))
