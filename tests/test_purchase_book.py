@@ -95,8 +95,9 @@ def _set_5038172_lines():
             non_recoverable_vat=[NonRecoverableVat(NON_RECOVERABLE_FREE_DELIVERY, _vat(11305))],
             total_amount=11305 + _vat(11305),
         ),
-        # Factura de compra: el comprador retiene todo el IVA, y a la vez tiene
-        # derecho al crédito, así que en SU libro de compras el IVA va normal.
+        # Factura de compra con retención TOTAL del IVA: el comprador retiene
+        # el impuesto entero, así que no lo paga. El total es el neto, y la
+        # retención se declara aparte.
         BookLine(
             46,
             9,
@@ -105,7 +106,8 @@ def _set_5038172_lines():
             "Proveedor E",
             net_amount=10215,
             vat_amount=_vat(10215),
-            total_amount=10215 + _vat(10215),
+            retained_total_vat=_vat(10215),
+            total_amount=10215,
         ),
         # Nota de crédito por descuento a la factura electrónica 32.
         BookLine(
@@ -197,19 +199,32 @@ def test_non_recoverable_totals_group_by_reason(cert):
 # --------------------------------------------------------------------------- #
 #  IVA retenido total
 # --------------------------------------------------------------------------- #
-def test_the_purchase_book_does_not_use_the_sales_retention_fields(cert):
-    """IVARetTotal está anotado (LV) en el XSD: es del libro de ventas.
+def test_a_purchase_invoice_declares_the_retained_vat(cert):
+    """Una factura de compra con retención total SÍ declara IVARetTotal.
 
-    Emitirlo en el de compras deja el libro descuadrado —el SII responde
-    LRH— porque el monto no cierra con ningún total que ese libro declare.
+    El XSD lo anota «(LV)» y de ahí salió la idea de que era campo del libro de
+    ventas. Pero la validación 31 del SII lo admite «en liquidaciones,
+    liquidaciones factura, FACTURAS DE COMPRA, notas de crédito y notas de
+    débito», y una factura de compra se registra en el libro de compras de
+    quien la emitió. Omitirlo costó un rechazo del set 5038172: «El Monto Total
+    No Cuadra / No Informa Adecuadamente IVA Retenido Total».
+
+    Las dos cosas van juntas, y ahí estaba la trampa: declarar la retención sin
+    bajar el total deja el libro descuadrado —que es lo que se observó antes y
+    llevó a la conclusión contraria—. Con retención total, el comprador NO paga
+    el IVA, así que el total es el neto. Lo dice la validación 16: el monto
+    total cuadra con neto + exento + IVA + … «menos las Retenciones».
     """
     book = _build(cert)
     detail = [d for d in book.iter(f"{NS}Detalle") if d.findtext(f"{NS}NroDoc") == "9"][0]
-    assert detail.find(f"{NS}IVARetTotal") is None
     assert detail.findtext(f"{NS}MntIVA") == str(_vat(10215))
+    assert detail.findtext(f"{NS}IVARetTotal") == str(_vat(10215))
+    # 10215 + 1941 - 1941 = 10215.
+    assert detail.findtext(f"{NS}MntTotal") == "10215"
 
     totals = _totals_for(book, 46)
-    assert totals.find(f"{NS}TotIVARetTotal") is None
+    assert totals.findtext(f"{NS}TotIVARetTotal") == str(_vat(10215))
+    assert totals.findtext(f"{NS}TotOpIVARetTotal") == "1"
 
 
 # --------------------------------------------------------------------------- #

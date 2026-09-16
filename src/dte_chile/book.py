@@ -198,8 +198,9 @@ def _summary(book: etree._Element, cover: BookCover) -> None:
         if compra:
             _non_recoverable_totals(totals, group)
             _common_use_totals(totals, group, cover.proportionality_factor)
-        else:
-            _retained_totals(totals, group)
+        # El resumen sigue al detalle: si una línea declara retención total, su
+        # total tiene que aparecer aquí, sea el libro de compras o el de ventas.
+        _retained_totals(totals, group)
 
         if not compra:
             _commission_totals(totals, group)
@@ -287,8 +288,14 @@ def _detail(book: etree._Element, line: BookLine, operation_type: str = "VENTA")
     _t(detail, "MntIVA", str(line.vat_amount))
     # Orden del XSD: ... MntIVA, MntActivoFijo?, MntIVAActivoFijo?, IVANoRec*,
     # IVAUsoComun?, ..., IVARetTotal?, ..., MntTotal.
-    # Mismo criterio que en el resumen: IVANoRec e IVAUsoComun son campos del
-    # libro de compras; IVARetTotal, del de ventas.
+    # IVANoRec e IVAUsoComun son campos del libro de compras. IVARetTotal va en
+    # los DOS: la validación 31 del SII lo admite «en liquidaciones,
+    # liquidaciones factura, FACTURAS DE COMPRA, notas de crédito y notas de
+    # débito», y una factura de compra con retención total del IVA se registra
+    # justamente en el libro de compras del que la emitió. Tratarlo como campo
+    # sólo de ventas dejaba esa línea sin declarar la retención, y el Servicio
+    # respondía «El Monto Total No Cuadra / No Informa Adecuadamente IVA
+    # Retenido Total».
     if operation_type == "COMPRA":
         for entry in line.non_recoverable_vat:
             node = etree.SubElement(detail, "{%s}IVANoRec" % NS)
@@ -296,7 +303,7 @@ def _detail(book: etree._Element, line: BookLine, operation_type: str = "VENTA")
             _t(node, "MntIVANoRec", str(entry.amount))
         if line.common_use_vat:
             _t(detail, "IVAUsoComun", str(line.common_use_vat))
-    elif line.retained_total_vat:
+    if line.retained_total_vat:
         _t(detail, "IVARetTotal", str(line.retained_total_vat))
     if operation_type == "VENTA" and (
         line.commission_net or line.commission_exempt or line.commission_vat
