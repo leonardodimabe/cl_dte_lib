@@ -178,14 +178,15 @@ def _item(node: etree._Element) -> Item:
 
 
 def _reference(node: etree._Element) -> Reference:
-    code = _text(node, "CodRef")
-    # En la boleta TpoDocRef es alfanumérico: el set de certificación usa "SET".
+    code = _text(node, "CodRef") or ""
     raw_type = _text(node, "TpoDocRef") or ""
     return Reference(
         doc_type=int(raw_type) if raw_type.isdigit() else raw_type,
         folio=_text(node, "FolioRef") or "",
         date=_optional_date(_text(node, "FchRef")),
-        code=ReferenceCode(int(code)) if code else None,
+        # CodRef es numérico en la factura (1, 2, 3) y alfanumérico en la
+        # boleta, donde el set de certificación pide «SET».
+        code=ReferenceCode(int(code)) if code.isdigit() else (code or None),
         reason=_text(node, "RazonRef") or "",
     )
 

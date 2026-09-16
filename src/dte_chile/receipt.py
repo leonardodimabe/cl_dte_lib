@@ -180,17 +180,29 @@ def _items(document: etree._Element, dte: DTE) -> None:
 
 
 def _references(document: etree._Element, dte: DTE) -> None:
-    """Referencias. En certificación se usa para identificar el caso del set."""
+    """Referencias. En certificación identifican el caso del set.
+
+    En la boleta los campos no significan lo mismo que en la factura. El formato
+    de boletas (v2.22) define ``TpoDocRef`` para referenciar un documento
+    tributario —«se debe utilizar un valor Numérico» (39, 41, 50, 52…)— y
+    ``CodRef`` como «Código alfanumérico establecido por la Empresa», de hasta 18
+    caracteres. El set de boletas del SII pide justamente ese:
+
+        <CodRef> SET
+        <RazonRef> CASO-1
+
+    Así que ``code`` acepta texto, y una referencia de caso no lleva TpoDocRef.
+    """
     for position, reference in enumerate(dte.references, start=1):
         node = etree.SubElement(document, "Referencia")
         _t(node, "NroLinRef", str(position))
-        # En la boleta TpoDocRef es alfanumérico: el set pide el literal "SET".
         if reference.doc_type:
             _t(node, "TpoDocRef", str(reference.doc_type))
         if reference.folio:
             _t(node, "FolioRef", str(reference.folio))
         if reference.code is not None:
-            _t(node, "CodRef", str(int(reference.code)))
+            codigo = reference.code if isinstance(reference.code, str) else str(int(reference.code))
+            _t(node, "CodRef", codigo[:18])
         if reference.reason:
             _t(node, "RazonRef", reference.reason[:90])
 

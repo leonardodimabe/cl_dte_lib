@@ -30,10 +30,21 @@ ACCESS_DENIED = (
     b"<faultstring>Acceso Denegado (from client)</faultstring>"
     b"</env:Fault></env:Body></env:Envelope>"
 )
+#: Respuesta del envío según la especificación del SII (ResultadoEnvioPost).
 UPLOAD_OK = (
-    b'<?xml version="1.0" encoding="UTF-8"?>'
-    b"<RECEPCIONDTE><TRACKID>123456789012345</TRACKID>"
-    b"<ESTADO>0</ESTADO><GLOSA>Envio Recibido</GLOSA></RECEPCIONDTE>"
+    b'{"rut_emisor": "77262159-0", "rut_envia": "12291733-9", "trackid": 123456789012345,'
+    b' "fecha_recepcion": "2026-09-17 10:30:10", "estado": "REC",'
+    b' "file": "EnvioBOLETA.xml"}'
+)
+#: Estado de un envío según la especificación (ResultadoEnvioDataRespuesta).
+STATUS_EPR = (
+    b'{"rut_emisor": "77262159-0", "rut_envia": "12291733-9", "trackid": 123456789012345,'
+    b' "fecha_recepcion": "17/09/2026 10:30:10", "estado": "EPR",'
+    b' "estadistica": [{"tipo": 39, "informados": 5, "aceptados": 4, "rechazados": 1,'
+    b' "reparos": 0}],'
+    b' "detalle_rep_rech": [{"tipo": 39, "folio": 3, "estado": "RCH",'
+    b' "error": [{"seccion": "DET", "linea": 1, "nivel": 3, "codigo": 200,'
+    b' "descripcion": "Valor Detalle Distinto a Precio * Cantidad"}]}]}'
 )
 
 
@@ -85,6 +96,15 @@ def test_environments_do_not_use_maullin_or_palena():
     """El SII dedica otros servidores a la boleta."""
     assert ReceiptEnvironment.CERTIFICATION.base_url == "https://apicert.sii.cl/recursos/v1"
     assert ReceiptEnvironment.PRODUCTION.base_url == "https://api.sii.cl/recursos/v1"
+
+
+def test_the_upload_has_its_own_server():
+    """La especificación: «pangal … exclusivo envio», y rahue en producción.
+
+    Enviar a apicert daba «Acceso Denegado (from client)».
+    """
+    assert ReceiptEnvironment.CERTIFICATION.upload_url == "https://pangal.sii.cl/recursos/v1"
+    assert ReceiptEnvironment.PRODUCTION.upload_url == "https://rahue.sii.cl/recursos/v1"
 
 
 # --------------------------------------------------------------------------- #
@@ -148,7 +168,7 @@ def test_upload_returns_a_fifteen_digit_track_id(client):
 
     assert result.track_id == "123456789012345"
     assert len(result.track_id) == 15  # el de factura tiene 10
-    assert result.detail == "Envio Recibido"
+    assert result.status == "REC"
 
 
 def test_upload_splits_the_ruts_into_body_and_check_digit(client):
@@ -158,7 +178,7 @@ def test_upload_splits_the_ruts_into_body_and_check_digit(client):
     instance.send_receipts(b"<EnvioBOLETA/>", "77262159-0", "12291733-9")
 
     _, url, kw = instance.session.calls[2]
-    assert url.endswith("/boleta.electronica.envio")
+    assert url == "https://pangal.sii.cl/recursos/v1/boleta.electronica.envio"
     assert kw["data"] == {
         "rutCompany": "77262159",
         "dvCompany": "0",
@@ -168,16 +188,18 @@ def test_upload_splits_the_ruts_into_body_and_check_digit(client):
     assert kw["files"]["archivo"][1] == b"<EnvioBOLETA/>"
 
 
-def test_token_travels_in_the_cookie(client):
+def test_token_travels_in_the_cookie_header(client):
+    """Por cabecera: una cookie del dominio apicert no viajaría a pangal."""
     instance = client(
         get=_FakeResponse(SEED_OK), post=[_FakeResponse(TOKEN_OK), _FakeResponse(UPLOAD_OK)]
     )
     instance.send_receipts(b"<EnvioBOLETA/>", "77262159-0", "12291733-9")
-    assert instance.session.cookies.get("TOKEN") == "XYUFZXZX761DX"
+    _, _, kw = instance.session.calls[2]
+    assert kw["headers"]["Cookie"] == "TOKEN=XYUFZXZX761DX"
 
 
 def test_access_denied_is_reported_with_the_sii_fault(client):
-    """Es la respuesta real cuando el titular del certificado no está autorizado."""
+    """La respuesta real del gateway a una ruta que no atiende."""
     instance = client(
         get=_FakeResponse(SEED_OK),
         post=[_FakeResponse(TOKEN_OK), _FakeResponse(ACCESS_DENIED, status_code=500)],
@@ -208,3 +230,41 @@ def test_dte_client_uses_the_same_user_agent_format():
     assert SIIClient.user_agent("12291733-9") == (
         "Mozilla/4.0 (compatible; PROG 1.0; Windows NT 5.0; 12291733-9)"
     )
+
+
+# --------------------------------------------------------------------------- #
+#  Estado del envío
+# --------------------------------------------------------------------------- #
+def test_status_is_read_with_stats_and_rejections(client):
+    instance = client(get=_FakeResponse(SEED_OK), post=_FakeResponse(TOKEN_OK))
+    instance.authenticate()
+    instance.session._get = _FakeResponse(STATUS_EPR)
+
+    estado = instance.submission_status("123456789012345", "77262159-0")
+
+    method, url, kw = instance.session.calls[-1]
+    assert method == "GET"
+    assert url == (
+        "https://apicert.sii.cl/recursos/v1/boleta.electronica.envio/77262159-0-123456789012345"
+    )
+    assert kw["headers"]["Cookie"] == "TOKEN=XYUFZXZX761DX"
+    assert estado.state == "EPR"
+    assert estado.stats[0]["aceptados"] == 4
+    assert estado.details[0]["error"][0]["descripcion"].startswith("Valor Detalle")
+
+
+def test_status_without_state_is_an_error(client):
+    instance = client(get=_FakeResponse(SEED_OK), post=_FakeResponse(TOKEN_OK))
+    instance.authenticate()
+    instance.session._get = _FakeResponse(ACCESS_DENIED, status_code=500)
+    with pytest.raises(SiiError, match="Acceso Denegado"):
+        instance.submission_status("123456789012345", "77262159-0")
+
+
+def test_upload_rejection_explains_the_http_status(client):
+    instance = client(
+        get=_FakeResponse(SEED_OK),
+        post=[_FakeResponse(TOKEN_OK), _FakeResponse(b"Error en datos enviados", 400)],
+    )
+    with pytest.raises(SiiUploadError, match="HTTP 400.*Error en datos enviados"):
+        instance.send_receipts(b"<EnvioBOLETA/>", "77262159-0", "12291733-9")

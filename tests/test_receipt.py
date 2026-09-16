@@ -59,8 +59,8 @@ def _receiver():
 def _receipt(folio, items, case=None, doc_type=DTEType.RECEIPT):
     references = []
     if case:
-        # El set exige identificar el caso en el XML.
-        references = [Reference(doc_type="SET", folio="1", date=ISSUE_DATE, reason=case)]
+        # El set pide «<CodRef> SET» y «<RazonRef> CASO-n».
+        references = [Reference(doc_type=None, folio="", code="SET", reason=case)]
     return DTE(
         type=doc_type,
         folio=folio,
@@ -203,10 +203,18 @@ def test_unit_of_measure_is_emitted(cert, caf_factory):
 
 
 def test_case_reference_identifies_the_set_case(cert, caf_factory):
+    """El set de boletas: «<CodRef> SET · <RazonRef> CASO-1».
+
+    En la boleta TpoDocRef es para un documento tributario y «se debe utilizar
+    un valor Numérico»; CodRef es el «Código alfanumérico establecido por la
+    Empresa». Poner SET en TpoDocRef dejaba texto en un campo numérico.
+    """
     document = build_receipt(_set_receipts()[0], caf_factory(39), TS)
     reference = document.find("Referencia")
-    assert reference.findtext("TpoDocRef") == "SET"
+    assert reference.findtext("CodRef") == "SET"
     assert reference.findtext("RazonRef") == "CASO-1"
+    assert reference.find("TpoDocRef") is None
+    assert reference.find("FolioRef") is None
 
 
 def test_non_receipt_type_is_rejected(caf_factory):

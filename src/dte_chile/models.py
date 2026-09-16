@@ -151,14 +151,17 @@ class GlobalDiscount:
 class Reference:
     """Referencia a otro documento (obligatoria en notas 56/61)."""
 
-    # TpoDocRef: normalmente el código numérico (33, 61...). En la boleta es
-    # alfanumérico: el set de certificación exige el literal "SET".
-    doc_type: int | str
+    # TpoDocRef: el código del documento (33, 61...), o "SET" en la factura de
+    # certificación. Vacío en la referencia de caso de una boleta, que va en
+    # CodRef (ver receipt._references).
+    doc_type: int | str | None
     folio: str  # FolioRef
     # FchRef. Opcional a propósito: el XSD de la BOLETA no define este campo,
     # así que una referencia de boleta no tiene fecha que informar.
     date: _dt.date | None = None
-    code: ReferenceCode | None = None  # CodRef
+    # CodRef: en factura, el código numérico (1 anula, 2 corrige texto, 3
+    # corrige montos). En boleta es alfanumérico: el set pide «SET».
+    code: ReferenceCode | str | None = None
     reason: str = ""  # RazonRef
 
 
