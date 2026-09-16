@@ -307,6 +307,47 @@ def verify_signatures(root: etree._Element) -> list[bool]:
     return results
 
 
+#: Cada ``<DTE>`` del texto transmitido, de la apertura al cierre.
+_DTE_EN_TEXTO = re.compile(rb"<DTE[\s>].*?</DTE>", re.S)
+#: Declaración XML del sobre: el fragmento suelto la necesita para decodificar
+#: bien los caracteres ISO-8859-1.
+_DECLARACION = re.compile(rb"^<\?xml[^>]*\?>")
+
+
+def verify_transmitted(xml: bytes) -> list[bool]:
+    """Verifica las firmas de un sobre **tal como se va a transmitir**.
+
+    `verify_signatures` trabaja sobre un árbol, y un árbol no conserva dónde
+    está escrita cada declaración de namespace: al aislar un <DTE>, lxml le
+    repone el ``xmlns`` que hereda del sobre aunque en el texto no esté. El SII
+    no tiene árbol, tiene bytes: corta cada <DTE> del texto y lo verifica suelto.
+    Si al <DTE> le falta su ``xmlns``, el fragmento queda sin namespace, el
+    digest cambia y responde «Firma DTE Incorrecta».
+
+    Pasó con el primer sobre de boletas: sus cinco firmas verificaban sobre el
+    árbol y el SII rechazó las cinco. Aquí los <DTE> se cortan del texto igual
+    que lo hace el Servicio; las demás firmas (la del SetDTE) se verifican con
+    el documento completo, que es su contexto real.
+    """
+    if not _XMLSEC_OK:
+        raise RuntimeError("xmlsec no está instalado.")
+
+    declaracion = _DECLARACION.match(xml)
+    prefijo = declaracion.group(0) if declaracion else b""
+    results = []
+    for trozo in _DTE_EN_TEXTO.findall(xml):
+        fragmento = etree.fromstring(prefijo + trozo)
+        firma = fragmento.find("{%s}Signature" % NS_DSIG)
+        results.append(firma is not None and _verify_in(fragmento, firma))
+
+    root = etree.fromstring(xml)
+    for sig in root.iter("{%s}Signature" % NS_DSIG):
+        padre = sig.getparent()
+        if padre is None or padre.tag != "{%s}DTE" % NS_DTE:
+            results.append(_verify_in(root, sig))
+    return results
+
+
 #: Declaración de namespace en la etiqueta de apertura que no sea la del SII.
 _NS_AJENO = re.compile(rb'\s+xmlns:[A-Za-z0-9_.-]+="[^"]*"')
 

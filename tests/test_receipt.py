@@ -7,6 +7,7 @@ SII rechaza la boleta.
 """
 
 import datetime as dt
+import re
 from pathlib import Path
 
 import pytest
@@ -235,6 +236,46 @@ def test_envelope_is_signed(cert, caf_factory):
     xml = _envelope(_set_receipts(), cert, caf_factory)
     results = signer.verify_signatures(etree.fromstring(xml))
     assert results and all(results)
+
+
+def test_each_receipt_declares_its_namespace(cert, caf_factory):
+    """El SII corta cada <DTE> del texto y lo verifica suelto.
+
+    Sin su ``xmlns`` el fragmento queda sin namespace y el SII rechazó las
+    cinco boletas del set con «Firma DTE Incorrecta» (TrackID 32169745).
+    """
+    xml = _envelope(_set_receipts(), cert, caf_factory)
+    aperturas = re.findall(rb"<DTE[\s>][^>]*>|<DTE>", xml)
+    assert len(aperturas) == 5
+    for tag in aperturas:
+        assert tag.count(b'xmlns="http://www.sii.cl/SiiDte"') == 1, tag
+        assert b"xmlns:xsi" not in tag, tag
+
+
+def test_signatures_hold_as_transmitted(cert, caf_factory):
+    """Cinco boletas cortadas del texto, más la firma del SetDTE."""
+    xml = _envelope(_set_receipts(), cert, caf_factory)
+    assert signer.verify_transmitted(xml) == [True] * 6
+
+
+def test_transmitted_check_catches_a_receipt_without_namespace(cert, caf_factory):
+    """El sobre que el SII rechazó: el árbol lo daba por bueno; el texto, no."""
+    from dte_chile.validation import serialize_document
+
+    receipts = _set_receipts()[:2]
+    signed = [
+        signer.sign_document(build_receipt(r, caf_factory(int(r.type)), TS), cert) for r in receipts
+    ]
+    cover = ReceiptCover(
+        issuer_rut="77262159-0",
+        sender_rut="12291733-9",
+        resolution_date=dt.date(2026, 1, 1),
+        subtotals=subtotals_for(receipts),
+    )
+    como_se_envio = serialize_document(build_receipt_envelope(signed, cover, cert, TS))
+
+    assert all(signer.verify_signatures(etree.fromstring(como_se_envio)))
+    assert signer.verify_transmitted(como_se_envio) == [False, False, True]
 
 
 def test_subtotals_group_affected_and_exempt_receipts():

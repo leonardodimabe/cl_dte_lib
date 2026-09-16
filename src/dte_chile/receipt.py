@@ -28,9 +28,10 @@ from . import signer
 from .caf import CAF
 from .certificate import Certificate
 from .document_types import ServiceIndicator
+from .envelope import serialize as serialize_envelope
 from .models import DTE
 from .ted import build_ted
-from .validation import build_root, serialize_document
+from .validation import build_root
 
 NS = "http://www.sii.cl/SiiDte"
 
@@ -103,7 +104,13 @@ def subtotals_for(documents: list[DTE]) -> list[tuple[int, int]]:
 
 
 def serialize(envelope: etree._Element) -> bytes:
-    return serialize_document(envelope)
+    """Igual que el ``EnvioDTE``: cada ``<DTE>`` sale con su propio ``xmlns``.
+
+    Con el serializador genérico lxml quitaba la declaración por redundante y el
+    SII rechazó las cinco boletas del set con «Firma DTE Incorrecta»: corta cada
+    <DTE> del texto y lo verifica suelto. Ver :func:`dte_chile.envelope.serialize`.
+    """
+    return serialize_envelope(envelope)
 
 
 # --------------------------------------------------------------------------- #
