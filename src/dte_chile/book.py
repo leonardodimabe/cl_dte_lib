@@ -268,7 +268,13 @@ def _detail(book: etree._Element, line: BookLine, operation_type: str = "VENTA")
     _t(detail, "NroDoc", str(line.folio))
     if line.voided:
         _t(detail, "Anulado", "A")
-    if line.vat_amount:
+    # La tasa va siempre que la línea lleve IVA, aunque no sea recuperable: el
+    # de uso común y el no recuperable también son IVA a una tasa. Mirando sólo
+    # `vat_amount` se omitía en esas dos líneas y el SII respondía «Reparo en
+    # Detalle - Falta [TasaImp]» —validación 25: «La Tasa de Impuesto es
+    # obligatoria para al menos los siguientes documentos Facturas,
+    # Liquidación, Liquidaciones Factura, Facturas de Compra, entre otros»—.
+    if line.vat_amount or line.common_use_vat or line.non_recoverable_vat:
         _t(detail, "TasaImp", str(line.vat_rate))
     _t(detail, "FchDoc", line.date.isoformat())
     _t(detail, "RUTDoc", line.rut)

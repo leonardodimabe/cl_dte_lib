@@ -107,7 +107,7 @@ def _set_5038172_lines():
             net_amount=10215,
             vat_amount=_vat(10215),
             retained_total_vat=_vat(10215),
-            total_amount=10215,
+            total_amount=10215 + _vat(10215),
         ),
         # Nota de crédito por descuento a la factura electrónica 32.
         BookLine(
@@ -209,22 +209,37 @@ def test_a_purchase_invoice_declares_the_retained_vat(cert):
     quien la emitió. Omitirlo costó un rechazo del set 5038172: «El Monto Total
     No Cuadra / No Informa Adecuadamente IVA Retenido Total».
 
-    Las dos cosas van juntas, y ahí estaba la trampa: declarar la retención sin
-    bajar el total deja el libro descuadrado —que es lo que se observó antes y
-    llevó a la conclusión contraria—. Con retención total, el comprador NO paga
-    el IVA, así que el total es el neto. Lo dice la validación 16: el monto
-    total cuadra con neto + exento + IVA + … «menos las Retenciones».
+    El total NO se descuenta: el SII lo dijo al probarlo. Con la retención
+    declarada y el total bajado al neto respondió «Reparo en Calculo de
+    [MntTotal] T:[46]-F:[9]»; con la retención declarada y el total en
+    neto + IVA, quedó conforme. La retención se informa, pero el monto total
+    del documento sigue siendo lo facturado.
     """
     book = _build(cert)
     detail = [d for d in book.iter(f"{NS}Detalle") if d.findtext(f"{NS}NroDoc") == "9"][0]
     assert detail.findtext(f"{NS}MntIVA") == str(_vat(10215))
     assert detail.findtext(f"{NS}IVARetTotal") == str(_vat(10215))
-    # 10215 + 1941 - 1941 = 10215.
-    assert detail.findtext(f"{NS}MntTotal") == "10215"
+    assert detail.findtext(f"{NS}MntTotal") == str(10215 + _vat(10215))
 
     totals = _totals_for(book, 46)
     assert totals.findtext(f"{NS}TotIVARetTotal") == str(_vat(10215))
     assert totals.findtext(f"{NS}TotOpIVARetTotal") == "1"
+
+
+def test_the_tax_rate_is_declared_even_when_the_vat_is_not_recoverable(cert):
+    """«Reparo en Detalle - Falta [TasaImp]» en las dos líneas sin IVA recuperable.
+
+    El IVA de uso común y el no recuperable también son IVA a una tasa, y la
+    validación 25 del SII la exige «para al menos los siguientes documentos
+    Facturas, Liquidación, Liquidaciones Factura, Facturas de Compra, entre
+    otros». Mirando sólo `vat_amount` se omitía justo donde el impuesto había
+    ido a parar a otro campo.
+    """
+    book = _build(cert)
+    for folio in ("781", "67"):
+        detail = [d for d in book.iter(f"{NS}Detalle") if d.findtext(f"{NS}NroDoc") == folio][0]
+        assert detail.findtext(f"{NS}MntIVA") == "0", "esta línea no tiene IVA recuperable"
+        assert detail.findtext(f"{NS}TasaImp") == "19", f"folio {folio} sin TasaImp"
 
 
 # --------------------------------------------------------------------------- #
