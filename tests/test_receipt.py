@@ -331,6 +331,16 @@ def test_receipt_can_be_read_back_and_printed(cert, caf_factory):
     assert "BOLETA ELECTRÓNICA" in html
     assert "Consulte su boleta en" in html
     assert "boletas.dimabe.cl" in html
+    # Lo mínimo de la Res. Ex. N°74 letra G.
+    assert "N° 1<" in html  # folio
+    assert "Fecha emisión: 31-08-2026" in html
+    assert "IVA (19%)" in html and "$4.758" in html
+    assert "TOTAL" in html and "$29.800" in html
+    assert "Timbre Electrónico SII" in html
+    assert "Verifique en www.sii.cl" in html
+    # La referencia del caso se lee tal cual, y no hay receptor vacío.
+    assert "Ref: SET — CASO-1" in html
+    assert "Señor(es)" not in html
 
 
 def test_net_priced_receipt_round_trips_too(cert, caf_factory):

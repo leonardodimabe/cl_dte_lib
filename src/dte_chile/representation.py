@@ -183,12 +183,7 @@ def _body(
     <span class="ejemplar">{_esc(copy)}</span>
     <span>Fecha emisión: {dte.issue_date.strftime("%d-%m-%Y")}</span>
   </div>
-  <div class="receptor">
-    <div><b>Señor(es):</b> {_esc(dte.receiver.business_name)}
-         &nbsp; <b>R.U.T.:</b> {_rut_display(dte.receiver.rut.value)}</div>
-    <div><b>Giro:</b> {_esc(dte.receiver.activity)}</div>
-    <div><b>Dirección:</b> {receiver_address}</div>
-  </div>
+  {_receiver_block(dte, receiver_address)}
   {_transfer_block(dte)}
   {_items_table(dte)}
   {_references(dte)}
@@ -323,9 +318,29 @@ def _totals(dte: DTE) -> str:
     return rows + _total_row("TOTAL", dte.total_amount, bold=True)
 
 
+def _receiver_block(dte: DTE, receiver_address: str) -> str:
+    """Datos del receptor.
+
+    La boleta al consumidor final no lo identifica: el XML trae el RUT genérico
+    66.666.666-6 y nada más, y la Res. Ex. N°74 no pide receptor en su
+    representación. Imprimir «Señor(es):», «Giro:» y «Dirección:» vacíos sólo
+    ensucia el papel. Si la boleta sí trae un comprador con nombre, se muestra.
+    """
+    if dte.type.is_receipt and not dte.receiver.business_name:
+        return ""
+    return f"""<div class="receptor">
+    <div><b>Señor(es):</b> {_esc(dte.receiver.business_name)}
+         &nbsp; <b>R.U.T.:</b> {_rut_display(dte.receiver.rut.value)}</div>
+    <div><b>Giro:</b> {_esc(dte.receiver.activity)}</div>
+    <div><b>Dirección:</b> {receiver_address}</div>
+  </div>"""
+
+
 def _references(dte: DTE) -> str:
     if not dte.references:
         return ""
+    if dte.type.is_receipt:
+        return _receipt_references(dte)
     rows = "".join(
         f"<div class='ref'>Ref: {_doc_label(ref.doc_type)} N° {ref.folio} "
         f"{' (' + ref.date.strftime('%d-%m-%Y') + ')' if ref.date else ''}"
@@ -333,6 +348,31 @@ def _references(dte: DTE) -> str:
         for ref in dte.references
     )
     return f"<div class='refs'>{rows}</div>"
+
+
+def _receipt_references(dte: DTE) -> str:
+    """En la boleta la referencia suele ser un código propio, no un documento.
+
+    El set de certificación pide ``<CodRef>SET</CodRef>`` y
+    ``<RazonRef>CASO-1</RazonRef>``, sin tipo ni folio. Con el formato de la
+    factura eso se imprimía «Ref:  N°  — CASO-1».
+    """
+    rows = []
+    for ref in dte.references:
+        parts = []
+        if ref.doc_type not in (None, ""):
+            parts.append(_doc_label(ref.doc_type))
+        if ref.folio:
+            parts.append(f"N° {_esc(str(ref.folio))}")
+        if ref.code is not None and not parts:
+            parts.append(_esc(str(getattr(ref.code, "value", ref.code))))
+        if ref.date:
+            parts.append(f"({ref.date.strftime('%d-%m-%Y')})")
+        text = " ".join(parts)
+        if ref.reason:
+            text = f"{text} — {_esc(ref.reason)}" if text else _esc(ref.reason)
+        rows.append(f"<div class='ref'>Ref: {text}</div>")
+    return f"<div class='refs'>{''.join(rows)}</div>"
 
 
 def _verification_note(dte: DTE, url: str) -> str:
