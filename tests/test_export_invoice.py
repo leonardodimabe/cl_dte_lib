@@ -123,13 +123,17 @@ def _case_5038176_1():
 
 
 def _case_5038177_2():
-    """Dos líneas, una con 5% de descuento, y recargo global por comisiones.
+    """Dos líneas, una con 5% de descuento, y recargos globales.
 
-    Es el caso real que el SII objetó (folio 8, set 5038177): el descuento de
-    la línea 1 va como ``DscRcgGlobal`` de tipo "D", no restado del
-    ``MontoItem``, y el grupo de bultos lleva ``IdContainer``/``Sello`` —el
-    SII los exige aunque el XSD los declare opcionales, con «(HED-2-804)
-    Exportacion : Campo obligatorio».
+    Es el caso real que el SII objetó (set 5038177): la hoja del set dice
+    «DESCUENTO LINEA # 1: 5%», así que el descuento es **de la línea** y va con
+    su ``DescuentoPct`` y su ``DescuentoMonto``, no como ``DscRcgGlobal``.
+    Globales son sólo los tres recargos que la hoja marca como tales: flete,
+    seguro y las comisiones al exterior (11% del total de la cláusula).
+
+    El grupo de bultos lleva ``IdContainer``/``Sello`` —el SII los exige aunque
+    el XSD los declare opcionales, con «(HED-2-804) Exportacion : Campo
+    obligatorio».
     """
     return _document(
         [
@@ -173,12 +177,6 @@ def _case_5038177_2():
             GlobalDiscount(
                 value=Decimal("91.43"), kind="R", value_type="$", reason="COMISIONES EN EL EXTERIOR"
             ),
-            GlobalDiscount(
-                value=Decimal("1362.30"),
-                kind="D",
-                value_type="$",
-                reason="DESCUENTO LINEA 1 (5% CAJAS CIRUELAS)",
-            ),
         ],
     )
 
@@ -209,19 +207,39 @@ def test_amounts_keep_their_decimals():
     assert item.line_amount == Decimal("13893.39")
 
 
-def test_line_discount_does_not_touch_the_amount_when_price_and_qty_are_given():
-    """El caso 5038177-2, folio con reparo real del SII.
+def test_line_discount_is_declared_with_its_amount():
+    """El caso 5038177-2, con los dos reparos que dio el SII y su salida.
 
-    Con cantidad y precio presentes, el SII contrasta MontoItem contra
-    PrcItem × QtyItem literal: «(DET L[1] -2-200) REPARO- Valor Detalle
-    Distinto a Precio * Cantidad : [25883.0000] <> [27246.0000]». Restar el
-    5% de descuento del MontoItem —lo que hacía antes— es lo que producía el
-    reparo. El descuento, si debe afectar el total, va como recargo/descuento
-    global (``DscRcgGlobal``), no descontado de la línea.
+    Hubo un ida y vuelta. Primero el MontoItem restaba el descuento **sin**
+    declarar DescuentoMonto, y la validación del sobre respondió «(DET L[1]
+    -2-200) REPARO- Valor Detalle Distinto a Precio * Cantidad :
+    [25883.0000] <> [27246.0000]»: con sólo el porcentaje a la vista, el SII
+    recalcula PrcItem × QtyItem y no le cuadra.
+
+    Se pasó entonces a no descontar nada en la línea, y la revisión del set
+    —que es otro portón, con otras reglas— respondió «Los Datos de la Linea 1
+    del Detalle No Cuadran con lo Especificado»: la hoja del set dice que esa
+    línea lleva 5% de descuento.
+
+    Declarando el monto junto al porcentaje cierran los dos: el SII puede
+    reproducir la fórmula del campo 38 —(Precio × Cantidad) − Monto Descuento +
+    Monto Recargo— y el resultado refleja lo que pide el enunciado.
     """
     item = ExportItem("A", quantity=239, unit_price=114, discount_pct=5)
     assert item.gross_amount == Decimal("27246")
-    assert item.line_amount == Decimal("27246")
+    assert item.discount_amount == Decimal("1362")
+    assert item.line_amount == Decimal("25884")
+
+
+def test_the_discount_amount_is_a_whole_number():
+    """``DescuentoMonto`` es ``MntImpType``: xs:positiveInteger.
+
+    El SII reusó en los documentos de exportación el tipo que usa para los
+    montos en pesos, así que un 5% de 27.246 dólares —1.362,30— no cabe. Se
+    declara redondeado, y el XSD rechaza el documento si no.
+    """
+    item = ExportItem("A", quantity=239, unit_price=114, discount_pct=5)
+    assert item.discount_amount == item.discount_amount.to_integral_value()
 
 
 def test_export_totals_have_no_vat():
@@ -235,21 +253,15 @@ def test_export_totals_have_no_vat():
 
 def test_case_5038177_2_totals():
     doc = _case_5038177_2()
-    # base_amount suma MontoItem SIN descontar: 239×114 + 164×62.
-    assert doc.base_amount == Decimal("27246") + Decimal("10168")
-    # El total sí lo descuenta, pero como recargo/descuento global: flete +
-    # seguro + comisiones - el 5% de la línea 1 (1362.30), que es justo lo que
-    # el SII confirmó como correcto: «(HED-2-220) ... : [36274.2200] <>
-    # [37636.5200]» — 37636.52 es base + recargos sin el descuento; 36274.22,
-    # con el descuento global aplicado, es el monto que el documento cobra.
+    # base_amount suma los MontoItem, y el de la línea 1 ya viene con su
+    # descuento: (239×114 − 1362) + 164×62.
+    assert doc.base_amount == Decimal("25884") + Decimal("10168")
+    # Encima van los tres recargos globales que la hoja del set marca como
+    # tales: flete, seguro y comisiones al exterior.
     assert doc.total_amount == (
-        doc.base_amount
-        + Decimal("115.14")
-        + Decimal("15.95")
-        + Decimal("91.43")
-        - Decimal("1362.30")
+        doc.base_amount + Decimal("115.14") + Decimal("15.95") + Decimal("91.43")
     )
-    assert doc.total_amount == Decimal("36274.22")
+    assert doc.total_amount == Decimal("36274.52")
 
 
 # --------------------------------------------------------------------------- #
@@ -341,10 +353,11 @@ def test_line_discount_and_unit_reach_the_xml(cert, caf_factory):
     root = build_export(_case_5038177_2(), caf_factory(110), TS)
     detail = root.find("Detalle")
     assert detail.findtext("UnmdItem") == "KN"
-    # DescuentoPct queda como dato informativo; MontoItem no lo resta —el SII
-    # lo contrasta contra PrcItem × QtyItem literal.
+    # El porcentaje nunca va solo: el formato pide su monto, y con los dos el
+    # MontoItem es reproducible.
     assert detail.findtext("DescuentoPct") == "5"
-    assert detail.findtext("MontoItem") == "27246"
+    assert detail.findtext("DescuentoMonto") == "1362"
+    assert detail.findtext("MontoItem") == "25884"
 
 
 def test_container_and_seal_reach_the_xml(cert, caf_factory):
@@ -355,12 +368,20 @@ def test_container_and_seal_reach_the_xml(cert, caf_factory):
     assert group.findtext("Sello") == "SL-4471209"
 
 
-def test_discount_global_charge_reaches_the_xml(cert, caf_factory):
+def test_only_the_charges_the_set_calls_global_are_global(cert, caf_factory):
+    """El descuento de la línea 1 no es un recargo global.
+
+    La hoja del set separa las dos cosas: «COMISIONES EN EL EXTRANJERO
+    (RECARGOS GLOBALES)» por un lado y «DESCUENTO LINEA # 1: 5%» por el otro.
+    """
     root = build_export(_case_5038177_2(), caf_factory(110), TS)
     charges = root.findall("DscRcgGlobal")
-    discount = [c for c in charges if c.findtext("TpoMov") == "D"]
-    assert len(discount) == 1
-    assert discount[0].findtext("ValorDR") == "1362.3"
+    assert [c.findtext("TpoMov") for c in charges] == ["R", "R", "R"]
+    assert [c.findtext("GlosaDR") for c in charges] == [
+        "FLETE",
+        "SEGURO",
+        "COMISIONES EN EL EXTERIOR",
+    ]
 
 
 def test_no_customs_block_when_absent(cert, caf_factory):
@@ -507,9 +528,13 @@ def test_a_line_that_states_its_amount_still_applies_its_surcharge():
 
     ``amount`` sustituye a cantidad × precio como base, no al monto final: si
     se declara RecargoPct, el MontoItem tiene que incluirlo.
+
+    El recargo se declara entero por el tipo del XSD, así que el 10% de 14 se
+    informa como 1 y el monto de la línea queda en 15, no en 15,4.
     """
     item = ExportItem("ASESORIAS Y PROYECTOS PROFESIONALES", amount=14, surcharge_pct=10)
-    assert item.line_amount == Decimal("15.4")
+    assert item.surcharge_amount == Decimal("1")
+    assert item.line_amount == Decimal("15")
 
 
 def test_a_line_that_states_its_amount_still_applies_its_discount():

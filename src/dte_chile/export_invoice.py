@@ -59,6 +59,11 @@ def _amount(value) -> Decimal:
     return Decimal(str(value)).quantize(AMOUNT_PLACES, rounding=ROUND_HALF_UP)
 
 
+def _entero(value) -> Decimal:
+    """Redondea a entero: los montos de descuento y recargo no admiten decimales."""
+    return Decimal(str(value)).quantize(Decimal(1), rounding=ROUND_HALF_UP)
+
+
 @dataclass
 class ExportItem:
     """Línea de un documento de exportación, en moneda extranjera."""
@@ -86,28 +91,48 @@ class ExportItem:
         return _amount(self.quantity * self.unit_price)
 
     @property
-    def line_amount(self) -> Decimal:
-        """MontoItem: lo que el SII puede recalcular, no lo que arma esta línea.
+    def discount_amount(self) -> Decimal | None:
+        """DescuentoMonto: el porcentaje llevado a moneda, **entero**.
 
-        Cuando la línea trae cantidad **y** precio, el SII exige que MontoItem
-        sea exactamente ``PrcItem × QtyItem`` — el reparo «(DET L[n] -2-200)
-        Valor Detalle Distinto a Precio * Cantidad» lo compara literal, sin
-        restar el descuento ni sumar el recargo. Ahí ``DescuentoPct``/
-        ``RecargoPct`` quedan sólo informativos; si el descuento debe afectar
-        el total del documento, va como ``DscRcgGlobal`` (ver
-        ``ExportDocument.global_charges``), no descontado del detalle.
+        El formato lo exige en cuanto se declara el porcentaje —«Si va el
+        descuento en %, debe ir el monto correspondiente»—, y sin él el SII no
+        puede cerrar la fórmula del MontoItem.
 
-        Cuando la línea informa su total directo (``amount``, sin cantidad ×
-        precio con que el SII pueda contradecirlo) sí corresponde aplicar el
-        descuento o recargo sobre esa base: no hay nada que cuadre distinto.
+        Va redondeado porque el XSD no deja otra: ``DescuentoMonto`` es de tipo
+        ``MntImpType``, que es ``xs:positiveInteger``. El SII reusó en los
+        documentos de exportación el mismo tipo que usa para los montos en
+        pesos, así que un 5% de 27.246 dólares —1.362,30— no es representable y
+        se declara 1.362.
         """
-        if self.quantity is not None and self.unit_price is not None:
-            return self.gross_amount
+        return _entero(self.gross_amount * self.discount_pct / 100) if self.discount_pct else None
+
+    @property
+    def surcharge_amount(self) -> Decimal | None:
+        """RecargoMonto: igual que el descuento, y con el mismo redondeo."""
+        return _entero(self.gross_amount * self.surcharge_pct / 100) if self.surcharge_pct else None
+
+    @property
+    def line_amount(self) -> Decimal:
+        """MontoItem, según la fórmula del campo 38 del formato del SII:
+
+            (Precio Unitario × Cantidad) − Monto Descuento + Monto Recargo
+
+        Aquí hubo un ida y vuelta que conviene no repetir. En agosto el motor
+        restaba el descuento **sin declarar DescuentoMonto**, y el SII respondía
+        «(DET L[n] -2-200) Valor Detalle Distinto a Precio * Cantidad»: con sólo
+        el porcentaje a la vista, el Servicio recalcula ``PrcItem × QtyItem`` y
+        no le cuadra. La conclusión de entonces —no restar nunca el descuento—
+        arreglaba ese reparo pero contradice la fórmula, y dejaba la línea
+        distinta de lo que pide el enunciado del set: «Los Datos de la Linea 1
+        del Detalle No Cuadran con lo Especificado».
+
+        Declarando el monto junto al porcentaje las dos cosas cierran a la vez.
+        """
         total = self.gross_amount
-        if self.discount_pct:
-            total -= total * self.discount_pct / 100
-        if self.surcharge_pct:
-            total += total * self.surcharge_pct / 100
+        if self.discount_amount:
+            total -= self.discount_amount
+        if self.surcharge_amount:
+            total += self.surcharge_amount
         return _amount(total)
 
 
@@ -450,8 +475,12 @@ def _items(root: etree._Element, doc: ExportDocument) -> None:
         _dec(detail, "QtyItem", item.quantity)
         _text(detail, "UnmdItem", item.unit, 4)
         _dec(detail, "PrcItem", item.unit_price)
+        # Orden del XSD: DescuentoPct, DescuentoMonto, …, RecargoPct,
+        # RecargoMonto, …, MontoItem.
         _dec(detail, "DescuentoPct", item.discount_pct)
+        _dec(detail, "DescuentoMonto", item.discount_amount)
         _dec(detail, "RecargoPct", item.surcharge_pct)
+        _dec(detail, "RecargoMonto", item.surcharge_amount)
         _t(detail, "MontoItem", _fmt(item.line_amount))
 
 
