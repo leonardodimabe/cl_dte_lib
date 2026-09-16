@@ -199,34 +199,76 @@ def test_non_recoverable_totals_group_by_reason(cert):
 # --------------------------------------------------------------------------- #
 #  IVA retenido total
 # --------------------------------------------------------------------------- #
-def test_a_purchase_invoice_declares_the_retained_vat(cert):
-    """Una factura de compra con retención total SÍ declara IVARetTotal.
+def test_a_purchase_invoice_declares_the_retained_vat_as_another_tax(cert):
+    """En el libro de COMPRAS la retención va en OtrosImp, no en IVARetTotal.
 
-    El XSD lo anota «(LV)» y de ahí salió la idea de que era campo del libro de
-    ventas. Pero la validación 31 del SII lo admite «en liquidaciones,
-    liquidaciones factura, FACTURAS DE COMPRA, notas de crédito y notas de
-    débito», y una factura de compra se registra en el libro de compras de
-    quien la emitió. Omitirlo costó un rechazo del set 5038172: «El Monto Total
-    No Cuadra / No Informa Adecuadamente IVA Retenido Total».
+    Cada libro tiene su propio campo y confundirlos costó dos rechazos del set
+    5038172: «El Monto Total No Cuadra / No Informa Adecuadamente IVA Retenido
+    Total», y al segundo intento «No Informa Adecuadamente IVA Retenido Total».
 
-    El total SÍ baja al neto. Lo fija el ejemplo del SII en «Ejemplos de
-    Registro de Documentos en la IECV», con sus propias cifras:
+    El formato IECV define <IVARetTotal> sólo en el detalle de VENTAS (§2.4):
+    lo informa el proveedor que *recibe* la factura de compra. El detalle de
+    COMPRAS (§3.4) no lo lista; su campo 21 manda declarar la retención en
+    <OtrosImp>: «Si la factura de Compra emitida es de retención total y no
+    corresponde a ningún cambio de sujeto, se debe usar el código 15 Retención
+    Total». El campo 22 pide la tasa del impuesto cuando se retuvo todo, y el 23
+    «la parte retenida».
 
-        Neto 75.000 · 19% IVA a retener 14.250 · menos 19% IVA retenido 14.250
-        Total 75.000
-
-        <MntNeto>75000</MntNeto><MntIVA>14250</MntIVA>
-        <IVARetTotal>14250</IVARetTotal><MntTotal>75000</MntTotal>
+    El total baja al neto porque el campo 25 lo dice: «Monto Neto + … − IVA
+    Retenido parcial y total».
     """
     book = _build(cert)
     detail = [d for d in book.iter(f"{NS}Detalle") if d.findtext(f"{NS}NroDoc") == "9"][0]
     assert detail.findtext(f"{NS}MntIVA") == str(_vat(10215))
-    assert detail.findtext(f"{NS}IVARetTotal") == str(_vat(10215))
     assert detail.findtext(f"{NS}MntTotal") == "10215"
+    assert detail.find(f"{NS}IVARetTotal") is None
+
+    otros = detail.find(f"{NS}OtrosImp")
+    assert otros is not None
+    assert otros.findtext(f"{NS}CodImp") == "15"
+    assert otros.findtext(f"{NS}TasaImp") == "19"
+    assert otros.findtext(f"{NS}MntImp") == str(_vat(10215))
+
+    totals = _totals_for(book, 46)
+    assert totals.find(f"{NS}TotIVARetTotal") is None
+    assert totals.find(f"{NS}TotOpIVARetTotal") is None
+    tot_otros = totals.find(f"{NS}TotOtrosImp")
+    assert tot_otros is not None
+    assert tot_otros.findtext(f"{NS}CodImp") == "15"
+    assert tot_otros.findtext(f"{NS}TotMntImp") == str(_vat(10215))
+    assert totals.findtext(f"{NS}TotMntTotal") is not None
+
+
+def test_the_sales_book_keeps_declaring_the_retention_in_its_own_field(cert):
+    """El libro de VENTAS conserva <IVARetTotal>: ahí sí es el campo correcto.
+
+    Es la contraparte de la misma operación —quien recibe la factura de compra—
+    y el formato lo describe en §2.4, campo 28: «Sólo Facturas de compra
+    recibidas cod (45, 46) […] Si la tasa de retención es por el Total del IVA,
+    el valor de la retención debe estar en este campo».
+    """
+    linea = BookLine(
+        46,
+        9,
+        PERIOD_DATE,
+        "17099910-K",
+        "Cliente E",
+        net_amount=10215,
+        vat_amount=_vat(10215),
+        retained_total_vat=_vat(10215),
+        total_amount=10215,
+    )
+    cover = _cover(lines=[linea])
+    cover.operation_type = "VENTA"
+    book = build_book(cover, cert, TS)
+
+    detail = next(iter(book.iter(f"{NS}Detalle")))
+    assert detail.findtext(f"{NS}IVARetTotal") == str(_vat(10215))
+    assert detail.find(f"{NS}OtrosImp") is None
 
     totals = _totals_for(book, 46)
     assert totals.findtext(f"{NS}TotIVARetTotal") == str(_vat(10215))
-    assert totals.findtext(f"{NS}TotOpIVARetTotal") == "1"
+    assert totals.find(f"{NS}TotOtrosImp") is None
 
 
 def test_the_tax_rate_is_declared_even_when_the_vat_is_not_recoverable(cert):

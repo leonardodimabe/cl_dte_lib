@@ -82,6 +82,12 @@ class BookLine:
     non_recoverable_vat: list[NonRecoverableVat] = field(default_factory=list)
     # IVA retenido por el comprador (factura de compra con cambio de sujeto).
     retained_total_vat: int = 0
+    # Código con que se declara esa retención en el libro de COMPRAS. El formato
+    # IECV (§3.4, campo 21) manda usar los códigos por rubro —30 a 41, y los de
+    # retención total asociados 301, 321, 331…— cuando hay cambio de sujeto, y
+    # deja el 15 «Retención Total» para cuando no lo hay. En el libro de VENTAS
+    # no se usa: allá la retención va en <IVARetTotal>.
+    retained_vat_code: int = 15
     # Monto no facturable del período (LV): p.ej. depósitos por envase. Entra en
     # MntPeriodo, que es lo que el libro de ventas cuadra.
     non_billable_amount: int = 0
@@ -200,7 +206,7 @@ def _summary(book: etree._Element, cover: BookCover) -> None:
             _common_use_totals(totals, group, cover.proportionality_factor)
         # El resumen sigue al detalle: si una línea declara retención total, su
         # total tiene que aparecer aquí, sea el libro de compras o el de ventas.
-        _retained_totals(totals, group)
+        _retained_totals(totals, group, compra)
 
         if not compra:
             _commission_totals(totals, group)
@@ -239,12 +245,29 @@ def _common_use_totals(totals: etree._Element, group: list[BookLine], factor: fl
         _t(totals, "TotCredIVAUsoComun", str(round(amount * factor)))
 
 
-def _retained_totals(totals: etree._Element, group: list[BookLine]) -> None:
+def _retained_totals(totals: etree._Element, group: list[BookLine], compra: bool) -> None:
+    """Totaliza la retención de IVA, por el canal que use cada libro.
+
+    No son dos formas de escribir lo mismo: el formato IECV le da a cada libro
+    su propio juego de campos. El resumen de COMPRAS (§3.3) no define
+    <TotIVARetTotal> ni <TotOpIVARetTotal> —esos son del de VENTAS (§2.3, y el
+    contador está marcado «campo próximo a eliminarse»)—; totaliza la retención
+    en <TotOtrosImp>, igual que cualquier otro impuesto.
+    """
     retained = [ln for ln in group if ln.retained_total_vat]
     if not retained:
         return
-    _t(totals, "TotOpIVARetTotal", str(len(retained)))
-    _t(totals, "TotIVARetTotal", str(sum(ln.retained_total_vat for ln in retained)))
+    if not compra:
+        _t(totals, "TotOpIVARetTotal", str(len(retained)))
+        _t(totals, "TotIVARetTotal", str(sum(ln.retained_total_vat for ln in retained)))
+        return
+    by_code: dict[int, int] = defaultdict(int)
+    for line in retained:
+        by_code[line.retained_vat_code] += line.retained_total_vat
+    for code, amount in sorted(by_code.items()):
+        node = etree.SubElement(totals, "{%s}TotOtrosImp" % NS)
+        _t(node, "CodImp", str(code))
+        _t(node, "TotMntImp", str(amount))
 
 
 def _commission_totals(totals: etree._Element, group: list[BookLine]) -> None:
@@ -293,15 +316,22 @@ def _detail(book: etree._Element, line: BookLine, operation_type: str = "VENTA")
     _t(detail, "MntNeto", str(line.net_amount))
     _t(detail, "MntIVA", str(line.vat_amount))
     # Orden del XSD: ... MntIVA, MntActivoFijo?, MntIVAActivoFijo?, IVANoRec*,
-    # IVAUsoComun?, ..., IVARetTotal?, ..., MntTotal.
-    # IVANoRec e IVAUsoComun son campos del libro de compras. IVARetTotal va en
-    # los DOS: la validación 31 del SII lo admite «en liquidaciones,
-    # liquidaciones factura, FACTURAS DE COMPRA, notas de crédito y notas de
-    # débito», y una factura de compra con retención total del IVA se registra
-    # justamente en el libro de compras del que la emitió. Tratarlo como campo
-    # sólo de ventas dejaba esa línea sin declarar la retención, y el Servicio
-    # respondía «El Monto Total No Cuadra / No Informa Adecuadamente IVA
-    # Retenido Total».
+    # IVAUsoComun?, ..., OtrosImp*, MntSinCred?, IVARetTotal?, ..., MntTotal.
+    #
+    # La retención de una factura de compra se declara distinto en cada libro, y
+    # confundirlos fue el origen del reparo «No Informa Adecuadamente IVA
+    # Retenido Total». El formato IECV define <IVARetTotal> sólo en el detalle
+    # de VENTAS (§2.4): lo informa el proveedor que *recibe* la factura de
+    # compra. El detalle de COMPRAS (§3.4) ni siquiera lo lista; ahí la
+    # retención es un impuesto más, en <OtrosImp>, y el campo 21 lo dice
+    # textual: «En el caso de Facturas de Compra se deben utilizar los códigos
+    # (30 al 41) asociados a retenciones […] Si la factura de Compra emitida es
+    # de retención total y no corresponde a ningún cambio de sujeto, se debe
+    # usar el código 15 Retención Total».
+    #
+    # El campo 22 fija la tasa: «En el caso de Facturas de compra emitidas se
+    # debe indicar la tasa de retención. Si se retuvo el total del impuesto se
+    # debe indicar el mismo valor de la tasa del impuesto».
     if operation_type == "COMPRA":
         for entry in line.non_recoverable_vat:
             node = etree.SubElement(detail, "{%s}IVANoRec" % NS)
@@ -309,7 +339,12 @@ def _detail(book: etree._Element, line: BookLine, operation_type: str = "VENTA")
             _t(node, "MntIVANoRec", str(entry.amount))
         if line.common_use_vat:
             _t(detail, "IVAUsoComun", str(line.common_use_vat))
-    if line.retained_total_vat:
+        if line.retained_total_vat:
+            node = etree.SubElement(detail, "{%s}OtrosImp" % NS)
+            _t(node, "CodImp", str(line.retained_vat_code))
+            _t(node, "TasaImp", str(line.vat_rate))
+            _t(node, "MntImp", str(line.retained_total_vat))
+    elif line.retained_total_vat:
         _t(detail, "IVARetTotal", str(line.retained_total_vat))
     if operation_type == "VENTA" and (
         line.commission_net or line.commission_exempt or line.commission_vat
