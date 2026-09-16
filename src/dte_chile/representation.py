@@ -324,9 +324,12 @@ def _receiver_block(dte: DTE, receiver_address: str) -> str:
     La boleta al consumidor final no lo identifica: el XML trae el RUT genérico
     66.666.666-6 y nada más, y la Res. Ex. N°74 no pide receptor en su
     representación. Imprimir «Señor(es):», «Giro:» y «Dirección:» vacíos sólo
-    ensucia el papel. Si la boleta sí trae un comprador con nombre, se muestra.
+    ensucia el papel. Si la boleta identifica a un comprador, se muestra.
     """
-    if dte.type.is_receipt and not dte.receiver.business_name:
+    from .receipt import ANONYMOUS_RECEIVER_RUT
+
+    anonymous = dte.receiver.rut.value == ANONYMOUS_RECEIVER_RUT or not dte.receiver.business_name
+    if dte.type.is_receipt and anonymous:
         return ""
     return f"""<div class="receptor">
     <div><b>Señor(es):</b> {_esc(dte.receiver.business_name)}

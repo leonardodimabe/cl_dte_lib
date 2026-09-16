@@ -259,25 +259,47 @@ def test_signatures_hold_as_transmitted(cert, caf_factory):
 
 
 def test_stamps_hold_as_transmitted(cert, caf_factory):
-    """El timbre se verifica sobre el <DD> tal como viaja.
-
-    La boleta al consumidor final no trae razón social: el DD se firmaba con
-    ``<RSR></RSR>`` y viajaba con ``<RSR/>``. El SII aceptó las cinco boletas
-    del set con reparo «Firma Timbre Electrónico Incorrecta» (TrackID 32169796).
-    """
+    """El timbre se verifica sobre el <DD> tal como viaja."""
     from dte_chile.ted import verify_stamps
 
     xml = _envelope(_set_receipts(), cert, caf_factory)
-    assert b"<RSR/>" in xml
     assert verify_stamps(xml) == [True] * 5
 
 
 def test_stamp_check_catches_a_dd_that_changed_after_signing(cert, caf_factory):
-    """Lo que devolvió el SII: la misma forma vacía, escrita distinto."""
+    """Un DD que no es el que se firmó no pasa, aunque el cambio sea mínimo."""
     from dte_chile.ted import verify_stamps
 
     xml = _envelope(_set_receipts()[:1], cert, caf_factory)
-    assert verify_stamps(xml.replace(b"<RSR/>", b"<RSR></RSR>")) == [False]
+    assert verify_stamps(xml.replace(b"<MNT>29800</MNT>", b"<MNT>29801</MNT>")) == [False]
+
+
+def test_anonymous_receipt_is_issued_to_consumidor_final(cert, caf_factory):
+    """Ni el <RSR> del timbre ni RznSocRecep van vacíos.
+
+    Con el RSR vacío el SII puso reparo «Firma Timbre Electrónico Incorrecta» a
+    las cinco boletas del set dos veces (TrackID 32169796 y 32169821). Odoo y
+    dte-sii, ambos certificados, emiten a nombre del consumidor final.
+    """
+    xml = _envelope(_set_receipts(), cert, caf_factory)
+    assert b"<RSR/>" not in xml and b"<RSR></RSR>" not in xml
+    assert xml.count(b"<RSR>Consumidor Final</RSR>") == 5
+    assert xml.count(b"<RznSocRecep>Consumidor Final</RznSocRecep>") == 5
+    Validator(SCHEMAS).validate(xml)
+
+
+def test_the_receipt_passed_in_is_not_modified(caf_factory):
+    receipt = _set_receipts()[0]
+    build_receipt(receipt, caf_factory(39), TS)
+    assert receipt.receiver.business_name == ""
+
+
+def test_a_named_buyer_keeps_its_name(cert, caf_factory):
+    receipt = _set_receipts()[0]
+    receipt.receiver.business_name = "JUAN PEREZ"
+    document = build_receipt(receipt, caf_factory(39), TS)
+    assert document.findtext("Encabezado/Receptor/RznSocRecep") == "JUAN PEREZ"
+    assert document.findtext("TED/DD/RSR") == "JUAN PEREZ"
 
 
 def test_transmitted_check_catches_a_receipt_without_namespace(cert, caf_factory):

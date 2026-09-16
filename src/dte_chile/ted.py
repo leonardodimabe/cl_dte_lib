@@ -115,9 +115,12 @@ def _text(parent: etree._Element, tag: str, value: str) -> etree._Element:
 
     Con ``text = ""`` lxml firma ``<RSR></RSR>``, pero en cuanto el documento se
     reserializa y se vuelve a leer —al armar el sobre— el texto vacío pasa a ser
-    ``None`` y sale ``<RSR/>``. El SII verifica el timbre sobre el texto que
-    recibe, y respondió «Firma Timbre Electrónico Incorrecta» en las cinco
-    boletas del set: la boleta al consumidor final no trae razón social.
+    ``None`` y sale ``<RSR/>``: lo firmado y lo enviado dejan de coincidir.
+
+    Esto sólo mantiene coherentes los bytes. **No basta para el SII**: con el
+    <RSR> vacío escrito igual al firmar y al enviar, las boletas del set igual
+    volvieron con reparo «Firma Timbre Electrónico Incorrecta». Por eso la
+    boleta anónima lleva razón social (ver ``receipt._with_receiver_name``).
     """
     node = etree.SubElement(parent, tag)
     node.text = value or None

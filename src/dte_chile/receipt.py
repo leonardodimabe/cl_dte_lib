@@ -18,6 +18,7 @@ El detalle del período se reporta aparte, en el consumo de folios (RCOF); ver
 
 from __future__ import annotations
 
+import copy
 import datetime as _dt
 from collections import Counter
 from dataclasses import dataclass, field
@@ -40,6 +41,8 @@ SII_RECEIVER_RUT = "60803000-K"
 
 # RUT genérico del consumidor final: la boleta no identifica al comprador.
 ANONYMOUS_RECEIVER_RUT = "66666666-6"
+# Y su razón social, que no puede ir vacía (ver `_with_receiver_name`).
+ANONYMOUS_RECEIVER_NAME = "Consumidor Final"
 
 # El XSD sólo admite 2 bloques SubTotDTE (los tipos 39 y 41) y 500 boletas.
 MAX_RECEIPTS = 500
@@ -62,6 +65,7 @@ def build_receipt(dte: DTE, caf: CAF, timestamp: _dt.datetime) -> etree._Element
     if not dte.type.is_receipt:
         raise ValueError(f"El tipo {int(dte.type)} no es una boleta (39 o 41).")
     dte.validate()
+    dte = _with_receiver_name(dte)
 
     document = etree.Element("Documento", ID=f"F{dte.folio}T{int(dte.type)}")
     _header(document, dte)
@@ -71,6 +75,33 @@ def build_receipt(dte: DTE, caf: CAF, timestamp: _dt.datetime) -> etree._Element
     document.append(build_ted(dte, caf, timestamp))
     etree.SubElement(document, "TmstFirma").text = timestamp.replace(microsecond=0).isoformat()
     return document
+
+
+def _with_receiver_name(dte: DTE) -> DTE:
+    """La boleta sin comprador identificado lleva «Consumidor Final» como razón social.
+
+    Con la razón social vacía, el <RSR> del timbre queda vacío, y el SII puso
+    reparo «Firma Timbre Electrónico Incorrecta» a las cinco boletas del set dos
+    veces seguidas: firmado como ``<RSR></RSR>`` (TrackID 32169796) y como
+    ``<RSR/>`` (TrackID 32169821), aunque en el segundo el timbre verificaba
+    sobre los bytes enviados.
+
+    Las dos implementaciones certificadas de referencia nunca lo dejan vacío. El
+    facturador de Odoo (``l10n_cl_edi``) emite la boleta a nombre del contacto
+    «Consumidor Final Anónimo», RUT 66666666-6, y de ahí saca ``RznSocRecep`` y
+    ``RSR``. dte-sii (devlas-cl) usa «Consumidor Final». Se toma la forma sin
+    tilde: dte-sii documenta que el lector PDF417 del SII no devuelve bien los
+    bytes acentuados del timbre.
+
+    Se copia el documento: el que llega no se modifica.
+    """
+    if dte.receiver.business_name:
+        return dte
+    receiver = copy.copy(dte.receiver)
+    receiver.business_name = ANONYMOUS_RECEIVER_NAME
+    named = copy.copy(dte)
+    named.receiver = receiver
+    return named
 
 
 def build_receipt_envelope(
