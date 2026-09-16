@@ -183,7 +183,7 @@ def test_una_firma_que_no_verifica_se_repite(monkeypatch, cert, caf_factory):
         return [False] if len(llamadas) == 1 else real(nodo)
 
     monkeypatch.setattr(signer, "verify_signatures", falla_la_primera)
-    dte = signer.sign_document(build_document(_factura(9, 'CLIENTE'), caf_factory(33), TS), cert)
+    dte = signer.sign_document(build_document(_factura(9, "CLIENTE"), caf_factory(33), TS), cert)
 
     assert len(llamadas) == 2, "debió volver a firmar tras la primera comprobación fallida"
     # Y lo que devuelve lleva UNA sola firma, no la mala más la buena.
@@ -198,7 +198,7 @@ def test_si_la_firma_nunca_verifica_se_aborta(monkeypatch, cert, caf_factory):
 
     monkeypatch.setattr(signer, "verify_signatures", lambda nodo: [False])
     with pytest.raises(ValueError, match="DTE-3-505"):
-        signer.sign_document(build_document(_factura(9, 'CLIENTE'), caf_factory(33), TS), cert)
+        signer.sign_document(build_document(_factura(9, "CLIENTE"), caf_factory(33), TS), cert)
 
 
 # --------------------------------------------------------------------------- #

@@ -160,7 +160,7 @@ def sign_document(document: etree._Element, cert: Certificate) -> etree._Element
 
     La verificación aísla el <DTE>, que es como lo comprueba el Servicio.
     """
-    for intento in range(1, _REINTENTOS_FIRMA + 2):
+    for _ in range(_REINTENTOS_FIRMA + 1):
         dte = sign_enveloped(wrap_dte(document), document, cert)
         # Sobre una copia: `verify_signatures` aísla el nodo y no debe tocar el
         # árbol que se devuelve.
