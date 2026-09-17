@@ -138,15 +138,17 @@ def test_exempt_line_is_flagged():
 #  Ejemplar cedible
 # --------------------------------------------------------------------------- #
 def test_tax_copy_has_no_cession_block():
+    """Manual de muestras impresas: el tributario va «sin identificación de destino»
+    y sin el cuadro de acuse de recibo, que es sólo del cedible."""
     html = _render(_invoice([Item("ITEM", quantity=1, unit_price=1000)]))
-    assert "TRIBUTARIO" in html
+    assert "TRIBUTARIO" not in html
+    assert "CEDIBLE" not in html
     assert "Ley 19.983" not in html
 
 
 def test_copies_include_tax_and_transferable():
     html = _render_copies(_invoice([Item("ITEM", quantity=1, unit_price=1000)]))
-    assert "TRIBUTARIO" in html
-    assert "CEDIBLE" in html
+    assert '<div class="destino">CEDIBLE</div>' in html
     assert "Ley 19.983" in html
     assert html.count('class="doc"') == 2
 
@@ -232,7 +234,7 @@ def test_line_without_price_shows_a_dash_instead_of_zero():
     html = _render(guide)
     # Fila: #, nombre, cantidad, precio, monto.
     assert '<td class="r">74</td><td class="r">—</td><td class="r">$0</td>' in html
-    assert "<td>TOTAL</td><td class='r'>$0</td>" in html
+    assert "<td>Monto Total</td><td class='r'>$0</td>" in html
 
 
 def test_invoice_without_transfer_has_no_transport_block():
@@ -258,6 +260,6 @@ def test_reference_shows_the_document_name_not_just_its_code():
         )
     ]
     html = _render(dte)
-    assert "Factura Electrónica N° 4" in html
+    assert "Factura electrónica N° 4" in html
     assert "03-11-2026" in html
     assert "ANULA FACTURA" in html

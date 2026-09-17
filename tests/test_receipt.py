@@ -379,9 +379,9 @@ def test_receipt_can_be_read_back_and_printed(cert, caf_factory):
     assert "N° 1<" in html  # folio
     assert "Fecha emisión: 31-08-2026" in html
     assert "IVA (19%)" in html and "$4.758" in html
-    assert "TOTAL" in html and "$29.800" in html
+    assert "Monto Total" in html and "$29.800" in html
     assert "Timbre Electrónico SII" in html
-    assert "Verifique en www.sii.cl" in html
+    assert "Verifique documento: www.sii.cl" in html
     # La referencia del caso se lee tal cual, y no hay receptor vacío.
     assert "Ref: SET — CASO-1" in html
     assert "Señor(es)" not in html
