@@ -29,6 +29,15 @@ NS_DSIG = "http://www.w3.org/2000/09/xmldsig#"
 # Códigos de estado (SII): 0 = conforme/aceptado.
 STATUS_OK = 0
 
+# Estados y glosas del «Formato Mensaje de Respuesta a Documentos Tributarios
+# Electrónicos» del SII (formato_ic.pdf). La glosa se repite tal cual.
+ENVELOPE_RECEIVED = (0, "Envio Recibido Conforme")
+ENVELOPE_WRONG_RECEIVER = (3, "Envio Rechazado - RUT Receptor No Corresponde")
+DTE_RECEIVED = (0, "DTE Recibido OK")
+DTE_WRONG_RECEIVER = (3, "DTE No Recibido - Error en RUT Receptor")
+RESULT_ACCEPTED = (0, "ACEPTADO OK")
+RESULT_REJECTED = 2
+
 # Declaración del recibo de mercaderías (Ley 19.983). DEBE ser EXACTAMENTE el
 # valor fijo del XSD (Recibos_v10.xsd): sin acentos y sin "°" tras los artículos.
 RECEIPT_DECLARATION = (
@@ -54,6 +63,21 @@ class Contact:
     name: str = "Contacto"
     phone: str = ""
     email: str = ""
+
+
+def addressed_to(document: ReceivedDocument, responder_rut: str) -> bool:
+    """¿El DTE va dirigido a quien responde?
+
+    Un envío puede traer documentos de otro receptor. El set de intercambio de
+    la certificación lo hace a propósito: de sus dos facturas, una no es para el
+    postulante. Esa no se recibe, se rechaza comercialmente y no lleva recibo de
+    mercaderías.
+    """
+    return _rut(document.receiver_rut) == _rut(responder_rut)
+
+
+def _rut(value: str) -> str:
+    return value.replace(".", "").strip().upper()
 
 
 @dataclass
@@ -129,10 +153,21 @@ def build_receipt_acknowledgment(
     contact: Contact | None = None,
     response_id: int = 1,
     envelope_code: int = 1,
+    responder_rut: str | None = None,
 ) -> etree._Element:
-    """RespuestaDTE de acuse de recibo del envío (RecepcionEnvio)."""
-    root, result = _base_response(envelope, contact, timestamp, response_id, 1)
+    """RespuestaDTE de acuse de recibo del envío (RecepcionEnvio).
 
+    El estado se da por envío y por documento: un DTE dirigido a otro RUT se
+    informa «DTE No Recibido - Error en RUT Receptor» (código 3), y un envío
+    cuya carátula no es para quien responde, «RUT Receptor No Corresponde».
+    """
+    responder = responder_rut or envelope.receiver_rut
+    root, result = _base_response(envelope, contact, timestamp, response_id, 1, responder)
+
+    if _rut(envelope.receiver_rut) == _rut(responder):
+        envelope_status = ENVELOPE_RECEIVED
+    else:
+        envelope_status = ENVELOPE_WRONG_RECEIVER
     reception = etree.SubElement(result, "{%s}RecepcionEnvio" % NS)
     _t(reception, "NmbEnvio", envelope.envelope_name)
     _t(reception, "FchRecep", _ts(timestamp))
@@ -142,14 +177,15 @@ def build_receipt_acknowledgment(
         _t(reception, "Digest", envelope.digest)
     _t(reception, "RutEmisor", envelope.issuer_rut)
     _t(reception, "RutReceptor", envelope.receiver_rut)
-    _t(reception, "EstadoRecepEnv", str(STATUS_OK))
-    _t(reception, "RecepEnvGlosa", "Envio Recibido Conforme")
+    _t(reception, "EstadoRecepEnv", str(envelope_status[0]))
+    _t(reception, "RecepEnvGlosa", envelope_status[1])
     _t(reception, "NroDTE", str(len(envelope.documents)))
     for document in envelope.documents:
+        status = DTE_RECEIVED if addressed_to(document, responder) else DTE_WRONG_RECEIVER
         reception_dte = etree.SubElement(reception, "{%s}RecepcionDTE" % NS)
         _document_data(reception_dte, document)  # RecepcionDTE NO lleva CodEnvio
-        _t(reception_dte, "EstadoRecepDTE", str(STATUS_OK))
-        _t(reception_dte, "RecepDTEGlosa", "DTE Recibido Conforme")
+        _t(reception_dte, "EstadoRecepDTE", str(status[0]))
+        _t(reception_dte, "RecepDTEGlosa", status[1])
 
     return signer.sign_enveloped(root, result, cert)
 
@@ -163,32 +199,51 @@ def build_result_response(
     contact: Contact | None = None,
     response_id: int = 1,
     envelope_code: int = 1,
+    responder_rut: str | None = None,
 ) -> etree._Element:
-    """RespuestaDTE de aceptación/rechazo comercial (ResultadoDTE)."""
+    """RespuestaDTE de aceptación/rechazo comercial (ResultadoDTE).
+
+    ``accept`` decide sobre los documentos dirigidos a quien responde. Los de
+    otro receptor se rechazan siempre. La glosa sigue el formato del SII:
+    «ACEPTADO OK», o «RECHAZADO» con el motivo, citando la Ley 19.983.
+    """
+    responder = responder_rut or envelope.receiver_rut
     root, result = _base_response(
-        envelope, contact, timestamp, response_id, len(envelope.documents)
+        envelope, contact, timestamp, response_id, len(envelope.documents), responder
     )
 
     for document in envelope.documents:
         result_dte = etree.SubElement(result, "{%s}ResultadoDTE" % NS)
         _document_data(result_dte, document, with_envelope_code=True, envelope_code=envelope_code)
-        if accept:
-            _t(result_dte, "EstadoDTE", str(STATUS_OK))
-            _t(result_dte, "EstadoDTEGlosa", "DTE Aceptado OK")
+        if not addressed_to(document, responder):
+            _t(result_dte, "EstadoDTE", str(RESULT_REJECTED))
+            motivo = f"el RUT receptor {document.receiver_rut} no corresponde a {responder}"
+            _t(result_dte, "EstadoDTEGlosa", _rejection(motivo))
+        elif accept:
+            _t(result_dte, "EstadoDTE", str(RESULT_ACCEPTED[0]))
+            _t(result_dte, "EstadoDTEGlosa", RESULT_ACCEPTED[1])
         else:
-            _t(result_dte, "EstadoDTE", "2")  # 2 = rechazado
-            _t(result_dte, "EstadoDTEGlosa", rejection_label or "DTE Rechazado")
+            _t(result_dte, "EstadoDTE", str(RESULT_REJECTED))
+            _t(result_dte, "EstadoDTEGlosa", _rejection(rejection_label))
 
     return signer.sign_enveloped(root, result, cert)
 
 
-def _base_response(envelope, contact, timestamp, response_id, detail_count):
+def _rejection(reason: str) -> str:
+    """«RECHAZADO» con el motivo y la Ley 19.983, dentro de los 256 del formato."""
+    text = "RECHAZADO segun Ley 19.983"
+    if reason:
+        text += f": {reason}"
+    return text[:256]
+
+
+def _base_response(envelope, contact, timestamp, response_id, detail_count, responder_rut):
     """Crea <RespuestaDTE><Resultado><Caratula> y devuelve (root, result)."""
     contact = contact or Contact()
     root = etree.Element("{%s}RespuestaDTE" % NS, nsmap={None: NS}, version="1.0")
     result = etree.SubElement(root, "{%s}Resultado" % NS, ID="Respuesta")
     cover = etree.SubElement(result, "{%s}Caratula" % NS, version="1.0")
-    _t(cover, "RutResponde", envelope.receiver_rut)  # quien recibió el DTE responde
+    _t(cover, "RutResponde", responder_rut)  # quien recibió el DTE responde
     _t(cover, "RutRecibe", envelope.issuer_rut)  # el emisor original recibe
     _t(cover, "IdRespuesta", str(response_id))
     _t(cover, "NroDetalles", str(detail_count))
@@ -220,11 +275,20 @@ def build_receipts_envelope(
     timestamp: _dt.datetime,
     location: str,
     contact: Contact | None = None,
+    responder_rut: str | None = None,
 ) -> etree._Element:
-    """Construye y firma un EnvioRecibos (un Recibo por DTE, firma anidada)."""
+    """Construye y firma un EnvioRecibos (un Recibo por DTE, firma anidada).
+
+    Sólo lleva recibo lo que efectivamente se recibió: los DTE dirigidos a quien
+    responde. Recibir mercaderías de una factura que no es propia no tiene
+    sentido, y el set de intercambio de la certificación trae justo esa trampa.
+    """
     contact = contact or Contact()
-    responder_rut = envelope.receiver_rut
+    responder_rut = responder_rut or envelope.receiver_rut
     recipient_rut = envelope.issuer_rut
+    received = [d for d in envelope.documents if addressed_to(d, responder_rut)]
+    if not received:
+        raise ValueError("ningún documento del envío está dirigido a quien responde")
     signer_rut = cert.rut or responder_rut
 
     root = etree.Element("{%s}EnvioRecibos" % NS, nsmap={None: NS}, version="1.0")
@@ -239,7 +303,7 @@ def build_receipts_envelope(
     _t(cover, "TmstFirmaEnv", _ts(timestamp))
 
     # Un Recibo por documento, cada uno con su firma sobre DocumentoRecibo.
-    for i, document in enumerate(envelope.documents, start=1):
+    for i, document in enumerate(received, start=1):
         receipt = etree.SubElement(set_receipts, "{%s}Recibo" % NS, version="1.0")
         receipt_doc = etree.SubElement(receipt, "{%s}DocumentoRecibo" % NS, ID=f"Recibo{i}")
         _t(receipt_doc, "TipoDoc", str(document.doc_type))

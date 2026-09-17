@@ -1,7 +1,9 @@
 """Tests de los acuses de intercambio (RespuestaDTE y EnvioRecibos)."""
 
 import datetime as dt
+from pathlib import Path
 
+import pytest
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -11,6 +13,10 @@ from lxml import etree
 from dte_chile import exchange as ix
 from dte_chile import signer
 from dte_chile.certificate import Certificate
+from dte_chile.validation import Validator
+
+SCHEMAS = Path(__file__).resolve().parents[1] / "schemas"
+FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
 def _self_signed_cert() -> Certificate:
@@ -111,7 +117,10 @@ def test_result_rejection():
     )
     reparse = etree.fromstring(ix.serialize(resp))
     assert reparse.find(".//{*}EstadoDTE").text == "2"
-    assert reparse.find(".//{*}EstadoDTEGlosa").text == "Monto no coincide"
+    # Formato del SII: «RECHAZADO» con el motivo, citando la Ley 19.983.
+    assert reparse.find(".//{*}EstadoDTEGlosa").text == (
+        "RECHAZADO segun Ley 19.983: Monto no coincide"
+    )
 
 
 def test_receipts_envelope_nested_signatures():
@@ -126,3 +135,82 @@ def test_receipts_envelope_nested_signatures():
     assert reparse.find(".//{*}Recinto").text == "Bodega Central"
     assert "Ley 19.983" in reparse.find(".//{*}Declaracion").text
     assert reparse.find(".//{*}RutFirma").text == "77777777-7"
+
+
+# --------------------------------------------------------------------------- #
+#  El set de intercambio de la certificación, tal como lo entrega el SII
+# --------------------------------------------------------------------------- #
+#: Dos facturas de 88888888-8 para CONSTRUCTORA DIMABE SPA (77262159-0). La
+#: segunda (folio 52299) va a otro receptor, 69507000-4: está puesta para ver si
+#: el postulante la distingue.
+DIMABE = "77262159-0"
+TS = dt.datetime(2026, 9, 17, 10, 0, 0)
+
+pytestmark_xsd = pytest.mark.skipif(
+    not (SCHEMAS / "response" / "RespuestaEnvioDTE_v10.xsd").exists(),
+    reason="XSD de respuesta no presentes",
+)
+
+
+def _set_sii():
+    xml = (FIXTURES / "set_intercambio_sii.xml").read_bytes()
+    return ix.parse_envelope(xml, "set_intercambio_sii.xml")
+
+
+def test_el_set_del_sii_trae_una_factura_para_otro_receptor():
+    envelope = _set_sii()
+    assert envelope.receiver_rut == DIMABE
+    assert [(d.folio, d.receiver_rut) for d in envelope.documents] == [
+        (52298, DIMABE),
+        (52299, "69507000-4"),
+    ]
+
+
+@pytestmark_xsd
+def test_acuse_de_recibo_por_documento():
+    """Formato del SII: 0 «DTE Recibido OK», 3 «DTE No Recibido - Error en RUT Receptor»."""
+    xml = ix.serialize(ix.build_receipt_acknowledgment(_set_sii(), CERT, TS, responder_rut=DIMABE))
+    Validator(SCHEMAS).validate(xml)
+    raiz = etree.fromstring(xml)
+    assert signer.verify_signatures(raiz) == [True]
+    assert raiz.findtext(".//{*}EstadoRecepEnv") == "0"
+    estados = {
+        n.findtext("{*}Folio"): (n.findtext("{*}EstadoRecepDTE"), n.findtext("{*}RecepDTEGlosa"))
+        for n in raiz.iter("{*}RecepcionDTE")
+    }
+    assert estados == {
+        "52298": ("0", "DTE Recibido OK"),
+        "52299": ("3", "DTE No Recibido - Error en RUT Receptor"),
+    }
+
+
+@pytestmark_xsd
+def test_resultado_comercial_rechaza_la_factura_ajena():
+    xml = ix.serialize(ix.build_result_response(_set_sii(), CERT, TS, responder_rut=DIMABE))
+    Validator(SCHEMAS).validate(xml)
+    raiz = etree.fromstring(xml)
+    assert signer.verify_signatures(raiz) == [True]
+    estados = {
+        n.findtext("{*}Folio"): (n.findtext("{*}EstadoDTE"), n.findtext("{*}EstadoDTEGlosa"))
+        for n in raiz.iter("{*}ResultadoDTE")
+    }
+    assert estados["52298"] == ("0", "ACEPTADO OK")
+    assert estados["52299"][0] == "2"
+    assert estados["52299"][1].startswith("RECHAZADO segun Ley 19.983")
+    assert "69507000-4" in estados["52299"][1]
+
+
+def test_recibo_de_mercaderias_solo_de_lo_recibido():
+    xml = ix.serialize(
+        ix.build_receipts_envelope(_set_sii(), CERT, TS, location="BODEGA", responder_rut=DIMABE)
+    )
+    if (SCHEMAS / "receipts" / "EnvioRecibos_v10.xsd").exists():
+        Validator(SCHEMAS).validate(xml)
+    raiz = etree.fromstring(xml)
+    assert [n.findtext("{*}Folio") for n in raiz.iter("{*}DocumentoRecibo")] == ["52298"]
+    assert signer.verify_signatures(raiz) == [True, True]
+
+
+def test_sin_documentos_propios_no_hay_recibo():
+    with pytest.raises(ValueError, match="ningún documento"):
+        ix.build_receipts_envelope(_set_sii(), CERT, TS, location="BODEGA", responder_rut="1-9")
