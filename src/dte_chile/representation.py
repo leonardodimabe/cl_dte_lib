@@ -531,6 +531,7 @@ REFERENCE_NAMES: dict[int, str] = {
     50: "Guía de despacho",
     55: "Nota de débito",
     60: "Nota de crédito",
+    99: "Anticipo",
     801: "Orden de compra",
     802: "Nota de pedido",
     803: "Contrato",
@@ -565,7 +566,8 @@ def _thousands(value: int) -> str:
 
 
 def _money(value: float) -> str:
-    return "$" + _thousands(round(value))
+    amount = round(value)
+    return ("-$" if amount < 0 else "$") + _thousands(abs(amount))
 
 
 def _money_or_dash(value: float) -> str:
@@ -591,8 +593,8 @@ def _esc(text: str) -> str:
 _STYLE = """
   @page { size: 21.5cm 27.9cm; margin: 1cm; }
   * { box-sizing: border-box; }
-  body { font-family: Arial, Helvetica, sans-serif; font-size: 12px; color: #111;
-         margin: 0; padding: 24px; }
+  body { font-family: Arial, "Liberation Sans", Helvetica, sans-serif; font-size: 11px;
+         color: #111; margin: 0; padding: 0; }
   .doc { max-width: 760px; margin: 0 auto 32px; }
   .doc + .doc { page-break-before: always; }
   .top { display: flex; justify-content: space-between; align-items: flex-start;
@@ -607,40 +609,44 @@ _STYLE = """
   .recuadro .folio { font-size: 20px; font-weight: bold; }
   .lado .sii { font-size: 12px; font-weight: bold; color: #c00; margin-top: 4px; }
   .cabecera { display: flex; justify-content: space-between; align-items: center;
-              margin: 10px 0 16px; }
+              margin: 8px 0 8px; }
   .ejemplar { border: 1px solid #333; border-radius: 3px; padding: 2px 10px;
               font-weight: bold; letter-spacing: 1px; }
-  .receptor { border: 1px solid #999; border-radius: 4px; padding: 8px 12px;
-              margin-bottom: 12px; }
-  .traslado { border: 1px solid #999; border-radius: 4px; padding: 8px 12px;
-              margin-bottom: 12px; display: grid; gap: 2px 20px;
-              grid-template-columns: 1fr 1fr; }
-  .traslado .titulo, .cesion .titulo { grid-column: 1 / -1; font-weight: bold;
-                                       margin-bottom: 2px; }
-  table.det { width: 100%; border-collapse: collapse; margin-bottom: 12px; }
-  table.det th { background: #f0f0f0; border: 1px solid #ccc; padding: 5px;
+  .receptor { border: 1px solid #999; border-radius: 4px; padding: 5px 10px;
+              margin-bottom: 8px; }
+  .traslado { border: 1px solid #999; border-radius: 4px; padding: 6px 12px;
+              margin-bottom: 10px; }
+  /* Dos columnas con inline-block y no con grid: el PDF lo arma WeasyPrint, y
+     con grid repartía el bloque en cuatro columnas angostas que partían cada
+     palabra en una línea y desbordaban la página. */
+  .traslado div { display: inline-block; width: 49%; vertical-align: top;
+                  margin: 1px 0; }
+  .traslado .titulo, .traslado .ancho { display: block; width: 100%; }
+  .traslado .titulo, .cesion .titulo { font-weight: bold; margin-bottom: 2px; }
+  table.det { width: 100%; border-collapse: collapse; margin-bottom: 8px; }
+  table.det th { background: #f0f0f0; border: 1px solid #ccc; padding: 3px 5px;
                  text-align: left; }
-  table.det td { border: 1px solid #ddd; padding: 5px; }
+  table.det td { border: 1px solid #ddd; padding: 3px 5px; }
   .exe { font-size: 10px; color: #666; border: 1px solid #bbb; border-radius: 3px;
          padding: 0 4px; }
   .r { text-align: right; }
   .totales { width: 340px; margin-left: auto; }
   .totales table { width: 100%; border-collapse: collapse; }
-  .totales td { padding: 4px 8px; }
+  .totales td { padding: 2px 8px; }
   .totales tr.fuerte td { font-weight: bold; font-size: 14px;
                           border-top: 2px solid #333; }
   .refs { margin: 8px 0; font-size: 11px; color: #444; }
   .pie { display: flex; justify-content: space-between; align-items: flex-end;
-         margin-top: 18px; }
+         margin-top: 10px; page-break-inside: avoid; }
   .timbre { text-align: center; margin-left: 2.5cm; width: 7.5cm; }
   .timbre img { width: 7.5cm; height: auto; max-height: 3.8cm; }
   .timbre .ley { font-size: 9px; margin-top: 3px; color: #111; }
   .destino { font-size: 16px; font-weight: bold; border: 1px solid #111;
              padding: 4px 10px; }
-  .cesion { border: 1px solid #999; border-radius: 4px; padding: 8px 12px;
-            margin-top: 18px; font-size: 11px; }
-  .cesion p { margin: 0 0 10px; }
-  .cesion .firmas { display: grid; gap: 8px 20px; grid-template-columns: 1fr 1fr; }
+  .cesion { border: 1px solid #999; border-radius: 4px; padding: 5px 10px;
+            margin-top: 8px; font-size: 10px; }
+  .cesion p { margin: 0 0 4px; }
+  .cesion .firmas div { display: inline-block; width: 49%; margin: 3px 0; }
 """
 
 _TEMPLATE = """<!DOCTYPE html>
@@ -859,7 +865,11 @@ def _export_body(node: etree._Element, resolution: ResolutionInfo) -> str:
         ]
         customs_rows.append(("Bultos", " · ".join(p for p in parts if p)))
     customs = "".join(
-        f"<div><b>{label}:</b> {_esc(value)}</div>" for label, value in customs_rows if value
+        f'<div class="ancho"><b>{label}:</b> {_esc(value)}</div>'
+        if label == "Bultos"
+        else f"<div><b>{label}:</b> {_esc(value)}</div>"
+        for label, value in customs_rows
+        if value
     )
     customs_block = (
         f'<div class="traslado"><div class="titulo">Exportación</div>{customs}</div>'
@@ -967,13 +977,14 @@ def _settlement_body(node: etree._Element, resolution: ResolutionInfo, copy: str
     totals += _total_row(f"IVA ({rate}%)", _amount(_xt(node, t + "IVA")))
     c = "Encabezado/Totales/Comisiones/"
     if _xt(node, c + "ValComNeto"):
-        net = _money(_amount(_xt(node, c + "ValComNeto")))
-        totals += _row("Menos: comisiones y otros cargos (neto)", f"-{net}")
+        # Se restan del total: una comisión negativa (un reverso) suma.
+        net = _money(-_amount(_xt(node, c + "ValComNeto")))
+        totals += _row("Menos: comisiones y otros cargos (neto)", net)
         if _amount(_xt(node, c + "ValComExe")):
-            exempt = _money(_amount(_xt(node, c + "ValComExe")))
-            totals += _row("Menos: comisiones y otros cargos (exento)", f"-{exempt}")
-        vat = _money(_amount(_xt(node, c + "ValComIVA")))
-        totals += _row("Menos: IVA de comisiones", f"-{vat}")
+            exempt = _money(-_amount(_xt(node, c + "ValComExe")))
+            totals += _row("Menos: comisiones y otros cargos (exento)", exempt)
+        vat = _money(-_amount(_xt(node, c + "ValComIVA")))
+        totals += _row("Menos: IVA de comisiones", vat)
     totals += _total_row("Monto Total", _amount(_xt(node, t + "MntTotal")), bold=True)
 
     return f"""<div class="doc">
