@@ -591,11 +591,25 @@ def _esc(text: str) -> str:
 
 
 _STYLE = """
-  @page { size: 21.5cm 27.9cm; margin: 1cm; }
+  /* El pie —timbre y leyenda de destino— se imprime en el margen inferior de
+     la hoja como «elemento en ejecución». El manual exige el timbre «en la
+     parte inferior del documento», y en un documento de dos líneas quedaba a
+     media página. Anclarlo con `position: absolute; bottom: 0` no sirve:
+     WeasyPrint, que arma el PDF, ignora ese desplazamiento y lo deja donde
+     caiga. Con `running()` cada copia lleva SU pie, porque el elemento se
+     renueva en cada página. */
+  @page { size: 21.5cm 27.9cm; margin: 1cm 1cm 4.6cm;
+          @bottom-left { content: element(pie); width: 100%; } }
   * { box-sizing: border-box; }
   body { font-family: Arial, "Liberation Sans", Helvetica, sans-serif; font-size: 11px;
          color: #111; margin: 0; padding: 0; }
-  .doc { max-width: 760px; margin: 0 auto 32px; }
+  /* El pie va anclado al fondo de la hoja: el manual exige el timbre «en la
+     parte inferior del documento», y en un documento de dos líneas quedaba a
+     media página. Se hace con posición absoluta y no con flex + `margin-top:
+     auto`, porque WeasyPrint —que arma el PDF— ignora los márgenes automáticos
+     dentro de un flex y dejaba el timbre igual de alto. 25.9cm = 27.9 de hoja
+     menos los márgenes; el relleno inferior reserva el sitio del pie. */
+  .doc { max-width: 760px; margin: 0 auto; }
   .doc + .doc { page-break-before: always; }
   .top { display: flex; justify-content: space-between; align-items: flex-start;
          gap: 16px; }
@@ -636,10 +650,13 @@ _STYLE = """
   .totales tr.fuerte td { font-weight: bold; font-size: 14px;
                           border-top: 2px solid #333; }
   .refs { margin: 8px 0; font-size: 11px; color: #444; }
-  .pie { display: flex; justify-content: space-between; align-items: flex-end;
-         margin-top: 10px; page-break-inside: avoid; }
+  .pie { position: running(pie); display: flex; align-items: flex-end;
+         justify-content: space-between; }
   .timbre { text-align: center; margin-left: 2.5cm; width: 7.5cm; }
-  .timbre img { width: 7.5cm; height: auto; max-height: 3.8cm; }
+  /* Alto máximo 2.8cm: el pie se imprime en el margen inferior de la hoja
+     (4.6cm) y con las dos leyendas debajo tiene que caber entero. El manual
+     pide al menos 2cm de alto, así que el tope no lo deja fuera de norma. */
+  .timbre img { width: 7.5cm; height: auto; max-height: 2.8cm; }
   .timbre .ley { font-size: 9px; margin-top: 3px; color: #111; }
   .destino { font-size: 16px; font-weight: bold; border: 1px solid #111;
              padding: 4px 10px; }

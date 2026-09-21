@@ -102,3 +102,22 @@ def test_el_impreso_muestra_la_referencia_al_caso_del_set():
     assert "Ref: SET N° 0" in html
     assert "CASO 5038170-1" in html
     assert "Tipo SET" not in html
+
+
+def test_el_timbre_va_en_el_margen_inferior_de_la_hoja():
+    """El manual pide el timbre «en la parte inferior del documento».
+
+    Se imprime como elemento en ejecución dentro del margen inferior de la
+    página, y no al final del contenido: en una factura de dos líneas el timbre
+    quedaba a media hoja. Anclarlo con `position: absolute; bottom: 0` no sirve
+    —WeasyPrint, que arma el PDF, ignora ese desplazamiento—, así que este test
+    cuida justo la técnica que sí funciona.
+    """
+    from dte_chile.representation import _STYLE
+
+    assert "@bottom-left { content: element(pie);" in _STYLE
+    assert "position: running(pie)" in _STYLE
+    # El margen inferior tiene que dar cabida al pie: timbre (2.8cm como tope)
+    # más las dos leyendas.
+    assert "margin: 1cm 1cm 4.6cm" in _STYLE
+    assert "max-height: 2.8cm" in _STYLE
