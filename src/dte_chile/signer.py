@@ -277,20 +277,38 @@ def _verify_in(contexto: etree._Element, sig: etree._Element) -> bool:
         return False
 
 
+#: Fragmentos que se firman sueltos y después se meten dentro de otro documento:
+#: el ``<DTE>`` en su sobre, y el documento cedido y la cesión dentro del AEC.
+#: Su firma se calculó sin los namespaces del envoltorio, así que verificarla
+#: exige volver a aislarlos.
+_FRAGMENTOS_FIRMADOS_SUELTOS = frozenset(
+    {
+        "{%s}DTE" % NS_DTE,
+        "{%s}DTECedido" % NS_DTE,
+        "{%s}Cesion" % NS_DTE,
+    }
+)
+
+
 def verify_signatures(root: etree._Element) -> list[bool]:
     """Verifica TODAS las firmas XMLDSig del árbol, como las verifica el SII.
 
     Devuelve una lista de booleanos, una por <Signature> encontrada, en orden.
 
-    La firma de un <DTE> se verifica **con ese <DTE> aislado como contexto**, no
-    con el sobre entero. Es como lo hace el Servicio, y la diferencia no es
-    cosmética: dentro del sobre está en ámbito el ``xmlns:xsi`` de la raíz, que
-    la C14N inclusiva mete en el digest; en el fragmento no está. Verificar con
-    el sobre entero daba por buenas firmas que el SII rechaza —y por malas las
-    correctas—, que es exactamente el agujero por el que se colaron dos envíos.
+    La firma de un ``<DTE>`` se verifica **con ese <DTE> aislado como
+    contexto**, no con el sobre entero. Es como lo hace el Servicio, y la
+    diferencia no es cosmética: dentro del sobre está en ámbito el
+    ``xmlns:xsi`` de la raíz, que la C14N inclusiva mete en el digest; en el
+    fragmento no está. Verificar con el sobre entero daba por buenas firmas que
+    el SII rechaza —y por malas las correctas—, que es exactamente el agujero
+    por el que se colaron dos envíos.
 
-    Las demás firmas (el <SetDTE> del sobre, un acuse) sí se verifican contra el
-    árbol completo: son la raíz del documento que se transmite, no un trozo.
+    Lo mismo vale para el documento cedido y la cesión dentro de un AEC: se
+    firman sueltos y viajan dentro de un sobre que sí declara ``xsi``.
+
+    Las demás firmas (el <SetDTE> del sobre, el <DocumentoAEC>, un acuse) sí se
+    verifican contra el árbol completo: son la raíz de lo que se transmite, no
+    un trozo.
     """
     if not _XMLSEC_OK:
         raise RuntimeError("xmlsec no está instalado.")
@@ -298,7 +316,7 @@ def verify_signatures(root: etree._Element) -> list[bool]:
     results = []
     for sig in root.iter("{%s}Signature" % NS_DSIG):
         padre = sig.getparent()
-        if padre is not None and padre.tag == "{%s}DTE" % NS_DTE:
+        if padre is not None and padre.tag in _FRAGMENTOS_FIRMADOS_SUELTOS:
             aislado = _aislar(padre)
             suya = aislado.find("{%s}Signature" % NS_DSIG)
             results.append(suya is not None and _verify_in(aislado, suya))
@@ -353,7 +371,7 @@ _NS_AJENO = re.compile(rb'\s+xmlns:[A-Za-z0-9_.-]+="[^"]*"')
 
 
 def _aislar(dte: etree._Element) -> etree._Element:
-    """El <DTE> como fragmento suelto, igual que lo extrae el SII del sobre.
+    """El fragmento suelto, igual que lo extrae el SII del documento que lo trae.
 
     Serializar el subárbol no basta: lxml repone en la etiqueta de apertura los
     namespaces que el nodo heredaba del sobre, con lo que el ``xmlns:xsi``
