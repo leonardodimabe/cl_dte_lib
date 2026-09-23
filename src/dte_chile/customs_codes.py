@@ -751,6 +751,88 @@ PAYMENT_MODES: dict[str, int] = {
 }
 
 
+# Monedas admitidas en <TpoMoneda> (enumeracion TipMonType del XSD del SII).
+# No es una tabla de Aduana con codigos: el XML lleva el nombre literal, y
+# cualquier otro hace que el SII rechace el documento por esquema.
+EXPORT_CURRENCIES: frozenset[str] = frozenset(
+    {
+        "BOLIVAR",
+        "BOLIVIANO",
+        "CHELIN",
+        "CORONA DIN",
+        "CORONA NOR",
+        "CORONA SC",
+        "CRUZEIRO REAL",
+        "DIRHAM",
+        "DOLAR AUST",
+        "DOLAR CAN",
+        "DOLAR HK",
+        "DOLAR NZ",
+        "DOLAR SIN",
+        "DOLAR TAI",
+        "DOLAR USA",
+        "DRACMA",
+        "ESCUDO",
+        "EURO",
+        "FLORIN",
+        "FRANCO BEL",
+        "FRANCO FR",
+        "FRANCO SZ",
+        "GUARANI",
+        "LIBRA EST",
+        "LIRA",
+        "MARCO AL",
+        "MARCO FIN",
+        "NUEVO SOL",
+        "OTRAS MONEDAS",
+        "PESETA",
+        "PESO",
+        "PESO CL",
+        "PESO COL",
+        "PESO MEX",
+        "PESO URUG",
+        "RAND",
+        "RENMINBI",
+        "RUPIA",
+        "SUCRE",
+        "YEN",
+    }
+)
+
+#: De codigo ISO a nombre del SII, solo donde la correspondencia no admite duda.
+#: Las que faltan —y las monedas que comparten nombre, como «PESO»— se declaran
+#: a mano: adivinarlas haria rechazar el documento por esquema.
+CURRENCY_BY_ISO: dict[str, str] = {
+    "USD": "DOLAR USA",
+    "EUR": "EURO",
+    "GBP": "LIBRA EST",
+    "CLP": "PESO CL",
+    "JPY": "YEN",
+    "CHF": "FRANCO SZ",
+    "CAD": "DOLAR CAN",
+    "AUD": "DOLAR AUST",
+    "NZD": "DOLAR NZ",
+    "HKD": "DOLAR HK",
+    "SGD": "DOLAR SIN",
+    "TWD": "DOLAR TAI",
+    "CNY": "RENMINBI",
+    "COP": "PESO COL",
+    "MXN": "PESO MEX",
+    "UYU": "PESO URUG",
+    "PEN": "NUEVO SOL",
+    "BOB": "BOLIVIANO",
+    "PYG": "GUARANI",
+    "ZAR": "RAND",
+    "AED": "DIRHAM",
+    "INR": "RUPIA",
+}
+
+
+def currency_for_iso(iso: str) -> str | None:
+    """El nombre que espera el SII para esa moneda ISO, o None si no consta."""
+    return CURRENCY_BY_ISO.get((iso or "").strip().upper())
+
+
 def _key(text: str) -> str:
     """Normaliza para comparar: sin tildes, sin espacios extra, en mayúsculas."""
     stripped = unicodedata.normalize("NFKD", text)
