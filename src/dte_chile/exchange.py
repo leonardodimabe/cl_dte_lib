@@ -49,6 +49,73 @@ RECEIPT_DECLARATION = (
 
 
 @dataclass
+class ReceivedLine:
+    """Una línea de detalle tal como la escribió el proveedor.
+
+    No se reconstruye el dominio de emisión (`parser.parse_document`): ese
+    camino exige que los totales recalculados calcen y redondea precios a
+    enteros, y un documento ajeno puede traer precios con decimales, impuestos
+    adicionales o montos brutos. Aquí se entrega lo que dice el XML, sin
+    recalcular nada: quien lo recibe decide qué hacer con él.
+    """
+
+    number: int
+    name: str
+    #: MontoItem: el monto de la línea con descuentos y recargos aplicados.
+    amount: float
+    description: str = ""
+    #: Pares (TpoCodigo, VlrCodigo). El código es el del catálogo del
+    #: proveedor, no el nuestro: por eso se entrega con su tipo.
+    codes: list[tuple[str, str]] = field(default_factory=list)
+    quantity: float | None = None
+    #: UnmdItem, texto libre («KG», «UN», «CJ»): no hay tabla que lo normalice.
+    unit: str = ""
+    unit_price: float | None = None
+    discount_amount: float = 0.0
+    surcharge_amount: float = 0.0
+    #: IndExe: 1 exento, 2 no facturable, 6 no facturable negativo...
+    exempt_indicator: int | None = None
+    #: CodImpAdic: los impuestos adicionales o retenciones que afectan la línea.
+    tax_codes: list[int] = field(default_factory=list)
+
+
+@dataclass
+class ReceivedReference:
+    """Un <Referencia>: la OC (801), la guía (52) o la factura que corrige una nota."""
+
+    #: TpoDocRef como texto: además de los tipos numéricos hay códigos como «HES».
+    doc_type: str
+    folio: str
+    date: _dt.date | None = None
+    #: CodRef: 1 anula, 2 corrige texto, 3 corrige montos. Sólo en notas.
+    code: int | None = None
+    reason: str = ""
+    #: IndGlobal=1: la referencia abarca un conjunto de documentos, no uno.
+    is_global: bool = False
+
+
+@dataclass
+class ReceivedAdjustment:
+    """Descuento o recargo global (<DscRcgGlobal>)."""
+
+    kind: str  # TpoMov: D descuento, R recargo
+    value_type: str  # TpoValor: % o $
+    value: float
+    #: IndExeDR: None sobre lo afecto, 1 sobre lo exento, 2 sobre lo no facturable.
+    exempt_indicator: int | None = None
+    reason: str = ""
+
+
+@dataclass
+class ReceivedTax:
+    """Impuesto adicional o retención de los totales (<ImptoReten>)."""
+
+    code: int
+    amount: int
+    rate: float | None = None
+
+
+@dataclass
 class ReceivedDocument:
     doc_type: int
     folio: int
@@ -56,6 +123,18 @@ class ReceivedDocument:
     issuer_rut: str
     receiver_rut: str
     total_amount: int
+    issuer_name: str = ""
+    due_date: _dt.date | None = None
+    #: MntBruto=1: los precios de las líneas vienen con IVA incluido.
+    prices_include_vat: bool = False
+    net_amount: int = 0
+    exempt_amount: int = 0
+    vat_rate: float | None = None
+    vat_amount: int = 0
+    taxes: list[ReceivedTax] = field(default_factory=list)
+    lines: list[ReceivedLine] = field(default_factory=list)
+    references: list[ReceivedReference] = field(default_factory=list)
+    adjustments: list[ReceivedAdjustment] = field(default_factory=list)
 
 
 @dataclass
@@ -126,6 +205,17 @@ def parse_envelope(xml: bytes, envelope_name: str = "envio.xml") -> ReceivedEnve
                 issuer_rut=_local_text(issuer, "RUTEmisor"),
                 receiver_rut=_local_text(receiver, "RUTRecep"),
                 total_amount=int(_local_text(totals, "MntTotal")),
+                issuer_name=_optional_text(issuer, "RznSoc") or "",
+                due_date=_optional_date(_optional_text(id_doc, "FchVenc")),
+                prices_include_vat=_optional_text(id_doc, "MntBruto") == "1",
+                net_amount=_int(_optional_text(totals, "MntNeto")),
+                exempt_amount=_int(_optional_text(totals, "MntExe")),
+                vat_rate=_optional_float(_optional_text(totals, "TasaIVA")),
+                vat_amount=_int(_optional_text(totals, "IVA")),
+                taxes=[_received_tax(n) for n in _children(totals, "ImptoReten")],
+                lines=[_received_line(n) for n in _children(doc, "Detalle")],
+                references=[_received_reference(n) for n in _children(doc, "Referencia")],
+                adjustments=[_received_adjustment(n) for n in _children(doc, "DscRcgGlobal")],
             )
         )
 
@@ -350,3 +440,98 @@ def _local(parent: etree._Element, name: str) -> etree._Element:
 
 def _local_text(parent: etree._Element, name: str) -> str:
     return _local(parent, name).text
+
+
+# --------------------------------------------------------------------------- #
+#  Lectura tolerante del documento recibido
+# --------------------------------------------------------------------------- #
+# Un documento ajeno se lee sin exigir nada que el XSD no exija: un campo
+# opcional que falta es un dato vacío, no un error que haga perder el correo.
+
+
+def _children(parent: etree._Element, name: str) -> list[etree._Element]:
+    """Hijos DIRECTOS con ese nombre local (el <Detalle> es hijo de <Documento>)."""
+    return [n for n in parent if isinstance(n.tag, str) and etree.QName(n).localname == name]
+
+
+def _optional_text(parent: etree._Element, name: str) -> str | None:
+    for node in parent.iter():
+        if node is not parent and etree.QName(node).localname == name:
+            return node.text.strip() if node.text else None
+    return None
+
+
+def _child_text(parent: etree._Element, name: str) -> str | None:
+    """Como `_optional_text`, pero sólo entre los hijos directos.
+
+    Un <Detalle> contiene <SubDscto> y <CdgItem> con hijos propios: buscar en
+    profundidad confundiría, por ejemplo, el <TpoCodigo> de un código con otro.
+    """
+    nodos = _children(parent, name)
+    return nodos[0].text.strip() if nodos and nodos[0].text else None
+
+
+def _int(value: str | None) -> int:
+    return int(round(float(value))) if value else 0
+
+
+def _optional_float(value: str | None) -> float | None:
+    return float(value) if value else None
+
+
+def _optional_date(value: str | None) -> _dt.date | None:
+    return _dt.date.fromisoformat(value) if value else None
+
+
+def _received_line(node: etree._Element) -> ReceivedLine:
+    codes = []
+    for cdg in _children(node, "CdgItem"):
+        tipo, valor = _child_text(cdg, "TpoCodigo"), _child_text(cdg, "VlrCodigo")
+        if valor:
+            codes.append((tipo or "", valor))
+    exento = _child_text(node, "IndExe")
+    return ReceivedLine(
+        number=_int(_child_text(node, "NroLinDet")),
+        name=_child_text(node, "NmbItem") or "",
+        amount=float(_child_text(node, "MontoItem") or 0),
+        description=_child_text(node, "DscItem") or "",
+        codes=codes,
+        quantity=_optional_float(_child_text(node, "QtyItem")),
+        unit=_child_text(node, "UnmdItem") or "",
+        unit_price=_optional_float(_child_text(node, "PrcItem")),
+        discount_amount=float(_child_text(node, "DescuentoMonto") or 0),
+        surcharge_amount=float(_child_text(node, "RecargoMonto") or 0),
+        exempt_indicator=int(exento) if exento else None,
+        tax_codes=[int(n.text) for n in _children(node, "CodImpAdic") if n.text],
+    )
+
+
+def _received_reference(node: etree._Element) -> ReceivedReference:
+    codigo = _child_text(node, "CodRef")
+    return ReceivedReference(
+        doc_type=_child_text(node, "TpoDocRef") or "",
+        folio=_child_text(node, "FolioRef") or "",
+        date=_optional_date(_child_text(node, "FchRef")),
+        code=int(codigo) if codigo and codigo.isdigit() else None,
+        reason=_child_text(node, "RazonRef") or "",
+        is_global=_child_text(node, "IndGlobal") == "1",
+    )
+
+
+def _received_adjustment(node: etree._Element) -> ReceivedAdjustment:
+    exento = _child_text(node, "IndExeDR")
+    return ReceivedAdjustment(
+        kind=_child_text(node, "TpoMov") or "D",
+        value_type=_child_text(node, "TpoValor") or "$",
+        value=float(_child_text(node, "ValorDR") or 0),
+        exempt_indicator=int(exento) if exento else None,
+        reason=_child_text(node, "GlosaDR") or "",
+    )
+
+
+def _received_tax(node: etree._Element) -> ReceivedTax:
+    return ReceivedTax(
+        code=_int(_child_text(node, "TipoImp")),
+        amount=_int(_child_text(node, "MontoImp")),
+        rate=_optional_float(_child_text(node, "TasaImp")),
+    )

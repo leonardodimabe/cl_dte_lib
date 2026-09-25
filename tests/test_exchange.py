@@ -214,3 +214,105 @@ def test_recibo_de_mercaderias_solo_de_lo_recibido():
 def test_sin_documentos_propios_no_hay_recibo():
     with pytest.raises(ValueError, match="ningún documento"):
         ix.build_receipts_envelope(_set_sii(), CERT, TS, location="BODEGA", responder_rut="1-9")
+
+
+# --------------------------------------------------------------------------- #
+#  Lectura del detalle: lo que hace falta para registrar la compra
+# --------------------------------------------------------------------------- #
+_FACTURA_CON_OC = b"""<?xml version="1.0" encoding="ISO-8859-1"?>
+<EnvioDTE xmlns="http://www.sii.cl/SiiDte" version="1.0">
+ <SetDTE ID="SetDoc">
+  <Caratula version="1.0">
+   <RutEmisor>76158145-7</RutEmisor><RutEnvia>12291733-9</RutEnvia>
+   <RutReceptor>77777777-7</RutReceptor>
+   <FchResol>2026-06-08</FchResol><NroResol>0</NroResol>
+   <TmstFirmaEnv>2026-06-08T10:30:00</TmstFirmaEnv>
+  </Caratula>
+  <DTE version="1.0"><Documento ID="F77T33">
+   <Encabezado>
+    <IdDoc><TipoDTE>33</TipoDTE><Folio>77</Folio><FchEmis>2026-06-08</FchEmis>
+     <FchVenc>2026-07-08</FchVenc></IdDoc>
+    <Emisor><RUTEmisor>76158145-7</RUTEmisor><RznSoc>FERRETERIA EL CLAVO</RznSoc></Emisor>
+    <Receptor><RUTRecep>77777777-7</RUTRecep></Receptor>
+    <Totales>
+     <MntNeto>10250</MntNeto><MntExe>1000</MntExe><TasaIVA>19</TasaIVA><IVA>1948</IVA>
+     <ImptoReten><TipoImp>28</TipoImp><TasaImp>0</TasaImp><MontoImp>500</MontoImp></ImptoReten>
+     <MntTotal>13698</MntTotal>
+    </Totales>
+   </Encabezado>
+   <Detalle>
+    <NroLinDet>1</NroLinDet>
+    <CdgItem><TpoCodigo>INT1</TpoCodigo><VlrCodigo>CL-100</VlrCodigo></CdgItem>
+    <CdgItem><TpoCodigo>EAN13</TpoCodigo><VlrCodigo>7801234567890</VlrCodigo></CdgItem>
+    <NmbItem>CLAVO 3 PULGADAS</NmbItem>
+    <DscItem>Caja de 1 kg</DscItem>
+    <QtyItem>2.5</QtyItem><UnmdItem>KG</UnmdItem><PrcItem>4100.5</PrcItem>
+    <DescuentoMonto>1</DescuentoMonto>
+    <CodImpAdic>28</CodImpAdic>
+    <MontoItem>10250</MontoItem>
+   </Detalle>
+   <Detalle>
+    <NroLinDet>2</NroLinDet>
+    <IndExe>1</IndExe>
+    <NmbItem>FLETE</NmbItem>
+    <MontoItem>1000</MontoItem>
+   </Detalle>
+   <DscRcgGlobal><NroLinDR>1</NroLinDR><TpoMov>D</TpoMov><GlosaDR>Pronto pago</GlosaDR>
+    <TpoValor>%</TpoValor><ValorDR>0</ValorDR></DscRcgGlobal>
+   <Referencia><NroLinRef>1</NroLinRef><TpoDocRef>801</TpoDocRef><FolioRef>P00012</FolioRef>
+    <FchRef>2026-06-01</FchRef></Referencia>
+   <Referencia><NroLinRef>2</NroLinRef><TpoDocRef>HES</TpoDocRef><FolioRef>55</FolioRef>
+    <FchRef>2026-06-02</FchRef></Referencia>
+  </Documento></DTE>
+ </SetDTE>
+</EnvioDTE>"""
+
+
+def test_el_detalle_viene_tal_cual_lo_escribio_el_proveedor():
+    # Para registrar la compra hace falta el detalle, los montos por impuesto y
+    # la OC; el precio con decimales no se redondea, porque es con ese que se
+    # compara contra la orden de compra.
+    d = ix.parse_envelope(_FACTURA_CON_OC).documents[0]
+    assert d.issuer_name == "FERRETERIA EL CLAVO"
+    assert d.due_date == dt.date(2026, 7, 8)
+    assert (d.net_amount, d.exempt_amount, d.vat_rate, d.vat_amount) == (10250, 1000, 19.0, 1948)
+    assert d.taxes == [ix.ReceivedTax(code=28, amount=500, rate=0.0)]
+    assert d.prices_include_vat is False
+
+    clavo, flete = d.lines
+    assert clavo.codes == [("INT1", "CL-100"), ("EAN13", "7801234567890")]
+    assert (clavo.quantity, clavo.unit, clavo.unit_price) == (2.5, "KG", 4100.5)
+    assert (clavo.discount_amount, clavo.amount) == (1.0, 10250.0)
+    assert clavo.tax_codes == [28]
+    assert clavo.exempt_indicator is None
+    assert clavo.description == "Caja de 1 kg"
+    # Una línea sin cantidad ni precio es válida: sólo MontoItem es obligatorio.
+    assert (flete.quantity, flete.unit_price, flete.exempt_indicator) == (None, None, 1)
+
+    assert d.adjustments[0].kind == "D" and d.adjustments[0].reason == "Pronto pago"
+
+
+def test_las_referencias_traen_la_orden_de_compra():
+    d = ix.parse_envelope(_FACTURA_CON_OC).documents[0]
+    oc, hes = d.references
+    # TpoDocRef es texto: además de los numéricos existen códigos como «HES».
+    assert (oc.doc_type, oc.folio, oc.date) == ("801", "P00012", dt.date(2026, 6, 1))
+    assert oc.code is None
+    assert hes.doc_type == "HES"
+
+
+def test_la_nota_de_credito_dice_que_factura_corrige():
+    xml = _FACTURA_CON_OC.replace(b"<TipoDTE>33</TipoDTE>", b"<TipoDTE>61</TipoDTE>").replace(
+        b"<TpoDocRef>801</TpoDocRef><FolioRef>P00012</FolioRef>",
+        b"<TpoDocRef>33</TpoDocRef><FolioRef>70</FolioRef>"
+        b"<CodRef>1</CodRef><RazonRef>ANULA FACTURA</RazonRef>",
+    )
+    ref = ix.parse_envelope(xml).documents[0].references[0]
+    assert (ref.doc_type, ref.folio, ref.code, ref.reason) == ("33", "70", 1, "ANULA FACTURA")
+
+
+def test_un_documento_minimo_se_lee_sin_detalle_opcional():
+    # El sobre del set del SII sólo trae lo obligatorio: no puede fallar por eso.
+    d = ix.parse_envelope(_ENVELOPE_XML).documents[0]
+    assert d.lines == [] and d.references == [] and d.taxes == []
+    assert (d.net_amount, d.vat_amount, d.vat_rate, d.due_date) == (0, 0, None, None)
