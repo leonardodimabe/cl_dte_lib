@@ -238,6 +238,35 @@ COUNTRIES: dict[str, int] = {
     "Deposito Franco": 906,
     "CHILE": 997,
     "Otros (Pais Desconocido)": 999,
+    # Las filas del anexo que traen «Abreviatura» se perdieron al transcribirlo
+    # la primera vez, y con ellas países tan comunes como Estados Unidos. Se
+    # agregaron contrastando la tabla completa con el Anexo 51-9 publicado
+    # (aduana.cl, revisado el 2026-09-30). Los códigos 237, 238 y 239 no
+    # existen en el anexo.
+    "SAO TOME Y PRINCIPE": 146,
+    "GUINEA ECUATORIAL": 147,
+    "REPUBLICA CENTRO AFRICANA": 148,
+    "SUDAN DEL SUR": 160,
+    "TRINIDAD Y TOBAGO": 203,
+    "REPUBLICA DOMINICANA": 206,
+    "ESTADOS UNIDOS DE AMERICA": 225,
+    "SAN VICENTE Y LAS GRANADINAS": 234,
+    "ANTIGUA Y BARBUDA": 240,
+    "SAINT KITTS & NEVIS": 241,
+    "PALESTINA": 322,
+    "EMIRATOS ARABES UNIDOS": 341,
+    "HONG KONG - REGION ADMINISTRATIVA ESPECIAL DE CHINA": 342,
+    "SAMOA OCCIDENTAL": 404,
+    "PAPUA, NUEVA GUINEA": 412,
+    "BOSNIA Y HERZEGOVINA": 543,
+    "REPUBLICA ESLOVACA": 545,
+    "REPUBLICA DE SERBIA": 546,
+    "MONTENEGRO": 561,
+    "Pesca Extraterritorial": 903,
+    "Zona Franca Iquique": 905,
+    "Zona Franca Punta Arenas": 907,
+    "Zona Franca Arica, Zona Industrial": 910,
+    "Nacional Reputada": 998,
 }
 
 # Puertos (Anexo 51-11)

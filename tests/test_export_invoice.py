@@ -632,3 +632,15 @@ def test_con_pago_los_montos_en_otra_moneda_se_convierten(cert, caf_factory):
 
     bloque = build_export(doc, caf_factory(110), TS).find("Encabezado/OtraMoneda")
     assert bloque.findtext("MntTotOtrMnda") == str(int(Decimal("160677.62") * 1265))
+
+
+def test_country_table_has_the_rows_that_carried_an_abbreviation():
+    """Las filas del Anexo 51-9 con «Abreviatura» se habían perdido: sin Estados
+    Unidos no se podía exportar a ese destino."""
+    assert COUNTRIES["ESTADOS UNIDOS DE AMERICA"] == 225
+    assert COUNTRIES["EMIRATOS ARABES UNIDOS"] == 341
+    assert COUNTRIES["HONG KONG - REGION ADMINISTRATIVA ESPECIAL DE CHINA"] == 342
+    # Un código por país. La excepción es el 902, que el propio anexo publica
+    # con dos glosas («Rancho de naves…» y «Aprovisionamiento…»).
+    codes = [c for c in COUNTRIES.values() if c != 902]
+    assert len(set(codes)) == len(codes)
