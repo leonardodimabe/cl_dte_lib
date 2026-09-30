@@ -7,8 +7,13 @@ import pytest
 from dte_chile.bhe import (
     BheClient,
     BheDocument,
+    BteDocument,
+    _extract_bte_total,
+    _extract_bte_total_pages,
     _extract_total,
+    _normalize_bte_row,
     _normalize_row,
+    _parse_bte_report,
     _parse_date,
     _parse_report,
     _to_int,
@@ -118,6 +123,8 @@ def test_to_int_chilean_format():
 
 # --- fetch_received con sesión falsa (paginación / mes vacío / sesión expirada) ---
 class _FakeResponse:
+    encoding = None
+
     def __init__(self, text: str):
         self.text = text
         self.status_code = 200
@@ -205,3 +212,159 @@ def test_fetch_received_sends_period_params():
     assert req["cbanoinformemensual"] == "2026"
     assert req["rut_arrastre"] == "76086428"
     assert req["dv_arrastre"] == "5"
+
+
+# --------------------------------------------------------------------------- #
+#  BTE emitidas (sistema zeus.sii.cl/cvc_cgi/bte)
+# --------------------------------------------------------------------------- #
+def _bte_row(folio, status, date, provider_rut, provider_name, gross, retained, paid) -> str:
+    """Una fila como la del informe del SII: ícono con enlace + 11 columnas."""
+    cells = [
+        folio,
+        f'<a href="javascript:void(0);">{status}</a>',
+        date,
+        "76086428-5",
+        "EMPRESA RECEPTORA SPA",
+        date,
+        provider_rut,
+        provider_name,
+        gross,
+        retained,
+        paid,
+    ]
+    tds = "".join(f'<td><font class="reporte">{c}\n</font></td>' for c in cells)
+    link = f'<td><a href="/cvc_cgi/bte/bte_indiv_cons3?C{folio}"><img src="/x.gif"></a></td>'
+    return f"<tr>{link}{tds}</tr>"
+
+
+def _bte_html(rows: list[str], total: int, page: int = 1, pages: int = 1) -> str:
+    """Informe de BTE emitidas: marcador, totales, paginación, filas y fila de totales."""
+    return (
+        "<html><body><font><b>INFORME BTE's EMITIDAS</b></font>"
+        f"<table><tr><td>Total Boletas : {total}</td>"
+        f"<td>P&aacute;gina {page} de {pages}</td></tr></table>"
+        '<table border=1><tr><td colspan="4"><b>Boleta</b></td><td><b>Emisi&oacute;n</b></td></tr>'
+        + "".join(rows)
+        + "<tr><td>Totales</td><td>122.714</td></tr></table></body></html>"
+    )
+
+
+_BTE_VIGENTE = _bte_row(
+    "130", "VIG", "06-05-2026", "12345678-5", "JUAN PRESTADOR", "94.395", "14.395", "80.000"
+)
+_BTE_ANULADA = _bte_row(
+    "131", "ANUL", "07-05-2026", "7654321-k", "MARIA PRESTADORA", "28.319", "4.319", "24.000"
+)
+
+
+class _FakeBteSession:
+    """Una página por llamada según ``PAGINA`` (el sistema de BTE numera desde 1)."""
+
+    def __init__(self, pages: list[str]):
+        self.pages = pages
+        self.requests: list[dict] = []
+        self.gets: list[str] = []
+        self.headers: dict = {}
+
+    def get(self, url, timeout=None):
+        self.gets.append(url)
+        return _FakeResponse("<html>menu</html>")
+
+    def post(self, url, data=None, headers=None, timeout=None):
+        self.requests.append(data)
+        return _FakeResponse(self.pages[int(data["PAGINA"]) - 1])
+
+    def close(self) -> None:
+        pass
+
+
+def _bte_client(pages: list[str]) -> BheClient:
+    client = BheClient("76086428-5", "clave-no-usada")
+    client.session = _FakeBteSession(pages)
+    client._authenticated = True  # evita el login real
+    return client
+
+
+def test_parse_bte_report_skips_header_and_totals():
+    rows = _parse_bte_report(_bte_html([_BTE_VIGENTE, _BTE_ANULADA], total=2))
+    assert [r["folio"] for r in rows] == ["130", "131"]
+
+
+def test_normalize_bte_row_vigente_and_anulada():
+    vig, anul = (
+        _normalize_bte_row(r, "2026-05")
+        for r in _parse_bte_report(_bte_html([_BTE_VIGENTE, _BTE_ANULADA], 2))
+    )
+    assert isinstance(vig, BteDocument)
+    assert vig.provider_rut == "12345678-5"
+    assert vig.provider_name == "JUAN PRESTADOR"
+    assert vig.folio == 130
+    assert vig.issue_date == dt.date(2026, 5, 6)
+    assert (vig.gross_amount, vig.retention_amount, vig.net_amount) == (94395, 14395, 80000)
+    assert vig.status == "vigente"
+    assert anul.status == "anulada"
+    assert anul.provider_rut == "7654321-K"
+
+
+def test_extract_bte_pages_and_total():
+    html = _bte_html([_BTE_VIGENTE], total=7, page=2, pages=3)
+    assert _extract_bte_total_pages(html) == 3
+    assert _extract_bte_total(html) == 7
+    assert _extract_bte_total_pages("<html>sin paginación</html>") == 1
+
+
+def test_fetch_issued_bte_single_page_and_params():
+    with _bte_client([_bte_html([_BTE_VIGENTE, _BTE_ANULADA], total=2)]) as client:
+        docs = client.fetch_issued_bte(2026, 3)
+    assert [d.folio for d in docs] == [130, 131]
+    assert all(d.period == "2026-03" for d in docs)
+    req = client.session.requests[0]
+    assert req == {
+        "CNTR": "1",
+        "PAGINA": "1",
+        "AUTEN": "RUTCLAVE",
+        "TIPO": "mensual",
+        "MESM": "03",
+        "ANOM": "2026",
+    }
+    assert client.session.gets == ["https://zeus.sii.cl/cvc_cgi/bte/bte_indiv_cons?1"]
+
+
+def test_fetch_issued_bte_paginates():
+    third = _bte_row("132", "VIG", "20-05-2026", "11111111-1", "PEDRO", "10.000", "1.525", "8.475")
+    page1 = _bte_html([_BTE_VIGENTE, _BTE_ANULADA], total=3, page=1, pages=2)
+    page2 = _bte_html([third], total=3, page=2, pages=2)
+    with _bte_client([page1, page2]) as client:
+        docs = client.fetch_issued_bte(2026, 5)
+    assert [d.folio for d in docs] == [130, 131, 132]
+    assert [r["PAGINA"] for r in client.session.requests] == ["1", "2"]
+
+
+def test_fetch_issued_bte_total_mismatch_raises():
+    # El SII dice 3 pero la única página trae 2: error explícito, no silencio.
+    with (
+        _bte_client([_bte_html([_BTE_VIGENTE, _BTE_ANULADA], total=3)]) as client,
+        pytest.raises(BheError, match="3 BTE"),
+    ):
+        client.fetch_issued_bte(2026, 5)
+
+
+def test_fetch_issued_bte_empty_month():
+    with _bte_client([_bte_html([], total=0)]) as client:
+        assert client.fetch_issued_bte(2026, 1) == []
+
+
+def test_fetch_issued_bte_expired_session_raises_auth_error():
+    with (
+        _bte_client(["<html>Redireccionando a IngresoRutClave.html ...</html>"]) as client,
+        pytest.raises(SiiAuthError),
+    ):
+        client.fetch_issued_bte(2026, 5)
+
+
+def test_fetch_issued_bte_unrecognized_html_raises_bhe_error():
+    with (
+        _bte_client(["<html><body>Pagina desconocida</body></html>"]) as client,
+        pytest.raises(BheError, match="Extracto"),
+    ):
+        client.fetch_issued_bte(2026, 5)

@@ -5,7 +5,7 @@ enviar Documentos Tributarios Electrónicos.
 """
 
 from . import customs_codes
-from .bhe import BheClient, BheDocument
+from .bhe import BheClient, BheDocument, BteDocument
 from .document_types import DispatchType, DTEType, ServiceIndicator, TransferType
 from .errors import BheError, DteError, RcvError, SiiAuthError, SiiError, SiiUploadError
 from .export_invoice import Customs, ExportDocument, ExportItem, PackageGroup
@@ -74,6 +74,7 @@ __all__ = [
     "to_book_lines",
     "BheClient",
     "BheDocument",
+    "BteDocument",
     "DteError",
     "SiiError",
     "SiiAuthError",
