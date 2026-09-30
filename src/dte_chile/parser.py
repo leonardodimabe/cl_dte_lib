@@ -23,7 +23,9 @@ from .document_types import (
     TransferType,
 )
 from .models import (
+    ADDITIONAL_TAX_CODES,
     DTE,
+    AdditionalTax,
     Driver,
     GlobalDiscount,
     Issuer,
@@ -92,7 +94,14 @@ def parse_document(document: etree._Element) -> DTE:
         dispatch_type=_enum(DispatchType, _text(id_doc, "TipoDespacho")),
         transfer_type=_enum(TransferType, _text(id_doc, "IndTraslado")),
         transport=_transport(_child(header, "Transporte")),
-        retentions=[_retention(node) for node in _children(totals, "ImptoReten")],
+        retentions=[
+            _retention(node) for node in _children(totals, "ImptoReten") if not _is_additional(node)
+        ],
+        additional_taxes=[
+            _additional_tax(node)
+            for node in _children(totals, "ImptoReten")
+            if _is_additional(node)
+        ],
         prices_include_vat=prices_include_vat,
         service_indicator=_enum(ServiceIndicator, _text(id_doc, "IndServicio")),
     )
@@ -174,6 +183,14 @@ def _item(node: etree._Element) -> Item:
         unit=_text(node, "UnmdItem") or "",
         discount_pct=float(_text(node, "DescuentoPct") or 0),
         discount_amount=int(discount_amount) if discount_amount is not None else None,
+        additional_tax_code=next(
+            (
+                int(n.text)
+                for n in _children(node, "CodImpAdic")
+                if n.text and int(n.text) in ADDITIONAL_TAX_CODES
+            ),
+            None,
+        ),
     )
 
 
@@ -188,6 +205,20 @@ def _reference(node: etree._Element) -> Reference:
         # boleta, donde el set de certificación pide «SET».
         code=ReferenceCode(int(code)) if code.isdigit() else (code or None),
         reason=_text(node, "RazonRef") or "",
+    )
+
+
+def _is_additional(node: etree._Element) -> bool:
+    """Un <ImptoReten> de recargo (ILA...) se suma al total; el resto se retiene."""
+    code = _text(node, "TipoImp") or ""
+    return code.isdigit() and int(code) in ADDITIONAL_TAX_CODES
+
+
+def _additional_tax(node: etree._Element) -> AdditionalTax:
+    return AdditionalTax(
+        code=int(_text(node, "TipoImp") or 0),
+        rate=float(_text(node, "TasaImp") or 0),
+        amount=int(_text(node, "MontoImp") or 0),
     )
 
 

@@ -77,6 +77,9 @@ class Item:
     # (DescuentoMonto). Si solo se da el %, el monto se deriva del bruto.
     discount_pct: float = 0.0
     discount_amount: int | None = None
+    # Impuesto adicional que grava la línea (<CodImpAdic>), p.ej. el ILA de una
+    # bebida. Tiene que estar declarado en ``DTE.additional_taxes``.
+    additional_tax_code: int | None = None
 
     @property
     def gross_amount(self) -> int:
@@ -193,6 +196,45 @@ class Retention:
         return self.amount if self.amount is not None else vat
 
 
+# Documentos donde el SII acepta impuestos adicionales que se suman al total
+# (tabla de impuestos del Formato DTE: «Facturas cod (30, 33), Notas de
+# Crédito cod (60, 61), Notas de Débito cod (55, 56)»).
+_ADDITIONAL_TAX_ALLOWED = (
+    DTEType.AFFECTED_INVOICE,
+    DTEType.DEBIT_NOTE,
+    DTEType.CREDIT_NOTE,
+)
+
+# Códigos de impuesto adicional que se RECARGAN al comprador (no se retienen):
+# el de artículos suntuarios (23) y el ILA de licores (24), vinos (25),
+# cervezas (26), bebidas analcohólicas (27) y bebidas azucaradas (271).
+# Formato DTE v2.0, pág. 44.
+ADDITIONAL_TAX_CODES = frozenset({23, 24, 25, 26, 27, 271})
+
+
+@dataclass
+class AdditionalTax:
+    """Impuesto adicional que se suma al total (<ImptoReten> con código de
+    recargo, p.ej. el ILA).
+
+    La base es la suma de las líneas marcadas con su código (<CodImpAdic>): el
+    ILA grava el precio neto de la bebida, no el documento entero. Con
+    ``amount=None`` el monto se calcula con la tasa.
+    """
+
+    code: int  # TipoImp
+    rate: float  # TasaImp
+    amount: int | None = None  # MontoImp
+
+    def base_over(self, items: list[Item]) -> int:
+        return sum(i.amount for i in items if i.additional_tax_code == self.code)
+
+    def amount_over(self, items: list[Item]) -> int:
+        if self.amount is not None:
+            return self.amount
+        return round(self.base_over(items) * self.rate / 100)
+
+
 @dataclass
 class Driver:
     """Chofer que realiza el traslado (<Chofer>)."""
@@ -269,6 +311,8 @@ class DTE:
     # Impuestos/retenciones adicionales. En la factura de compra, la retención
     # total del IVA (código 15) es lo habitual: el comprador la entera al SII.
     retentions: list[Retention] = field(default_factory=list)
+    # Impuestos adicionales que se recargan al comprador (ILA y otros).
+    additional_taxes: list[AdditionalTax] = field(default_factory=list)
     # Boleta: los precios de las líneas vienen con IVA incluido, así que el neto
     # se deriva del bruto en vez de sumarse. Se declara con IndMntNeto sólo
     # cuando NO es así (el XSD sólo admite el valor 2 = "son valores netos").
@@ -334,10 +378,22 @@ class DTE:
         return sum(r.amount_over(self.vat) for r in self.retentions)
 
     @property
+    def additional_tax_amount(self) -> int:
+        """Suma de los impuestos adicionales (ILA...), que se agregan al total."""
+        return sum(t.amount_over(self.items) for t in self.additional_taxes)
+
+    @property
     def total_amount(self) -> int:
-        # El SII define MntTotal = neto + exento + IVA - retenciones: en una
-        # factura de compra con retención total, al proveedor se le paga el neto.
-        return self.net_amount + self.vat + self.exempt_amount - self.retained_amount
+        # El SII define MntTotal = neto + exento + IVA + adicionales - retenciones:
+        # en una factura de compra con retención total, al proveedor se le paga
+        # el neto; en una factura de bebidas, el ILA se cobra encima.
+        return (
+            self.net_amount
+            + self.vat
+            + self.exempt_amount
+            + self.additional_tax_amount
+            - self.retained_amount
+        )
 
     def validate(self) -> None:
         """Validaciones de negocio mínimas antes de construir el XML."""
@@ -365,6 +421,7 @@ class DTE:
             raise ValueError("Los descuentos globales dejan un total negativo.")
         self._validate_transfer()
         self._validate_retentions()
+        self._validate_additional_taxes()
         self.validate_text()
 
     def text_problems(self) -> list[FieldProblem]:
@@ -415,6 +472,48 @@ class DTE:
             )
         if self.retained_amount > self.net_amount + self.vat + self.exempt_amount:
             raise ValueError("Las retenciones superan el monto del documento.")
+
+    def _validate_additional_taxes(self) -> None:
+        declared = {t.code for t in self.additional_taxes}
+        used = {i.additional_tax_code for i in self.items if i.additional_tax_code}
+        if not declared and not used:
+            return
+        if self.type not in _ADDITIONAL_TAX_ALLOWED:
+            allowed = ", ".join(str(int(t)) for t in _ADDITIONAL_TAX_ALLOWED)
+            raise ValueError(
+                f"El tipo {int(self.type)} no admite impuestos adicionales; el SII sólo "
+                f"los acepta en {allowed}."
+            )
+        unknown = declared - ADDITIONAL_TAX_CODES
+        if unknown:
+            raise ValueError(
+                f"Código de impuesto adicional no soportado: {sorted(unknown)}. "
+                f"Se admiten {sorted(ADDITIONAL_TAX_CODES)}."
+            )
+        if len(declared) != len(self.additional_taxes):
+            raise ValueError("Un impuesto adicional está declarado dos veces.")
+        if used - declared:
+            raise ValueError(
+                f"Hay líneas con impuesto adicional {sorted(used - declared)} que no "
+                "está declarado en el documento."
+            )
+        if declared - used:
+            raise ValueError(
+                f"El impuesto adicional {sorted(declared - used)} no grava ninguna línea."
+            )
+        for item in self.items:
+            if item.additional_tax_code and (item.exempt or self.type.is_exempt):
+                raise ValueError(
+                    f"La línea «{item.name}» es exenta: no puede llevar impuesto adicional."
+                )
+        # El descuento global rebaja el neto pero no la base de cada impuesto
+        # adicional, que es por línea: el ILA quedaría calculado sobre un monto
+        # que el documento ya no cobra. Mejor detenerse que emitir con reparo.
+        if self.global_discounts:
+            raise ValueError(
+                "Un documento con impuestos adicionales no admite descuentos o recargos "
+                "globales: aplica el descuento en cada línea."
+            )
 
     @property
     def accompanies_goods(self) -> bool:

@@ -60,6 +60,16 @@ class NonRecoverableVat:
 
 
 @dataclass
+class OtherTax:
+    """Impuesto adicional de la línea (<OtrosImp>), p.ej. el ILA de una factura
+    de bebidas. Se informa en los dos libros."""
+
+    code: int  # CodImp
+    amount: int  # MntImp
+    rate: float | None = None  # TasaImp
+
+
+@dataclass
 class BookLine:
     """Una línea (documento) del libro."""
 
@@ -101,6 +111,8 @@ class BookLine:
     commission_net: int = 0
     commission_exempt: int = 0
     commission_vat: int = 0
+    # Impuestos adicionales (ILA y otros), uno por código.
+    other_taxes: list[OtherTax] = field(default_factory=list)
 
     @property
     def has_recoverable_vat(self) -> bool:
@@ -254,20 +266,24 @@ def _retained_totals(totals: etree._Element, group: list[BookLine], compra: bool
     contador está marcado «campo próximo a eliminarse»)—; totaliza la retención
     en <TotOtrosImp>, igual que cualquier otro impuesto.
     """
-    retained = [ln for ln in group if ln.retained_total_vat]
-    if not retained:
-        return
-    if not compra:
-        _t(totals, "TotOpIVARetTotal", str(len(retained)))
-        _t(totals, "TotIVARetTotal", str(sum(ln.retained_total_vat for ln in retained)))
-        return
+    # Los impuestos adicionales (ILA) van en <TotOtrosImp> en los dos libros,
+    # y en el de compras comparten el bloque con la retención: un solo total
+    # por código. El XSD pone <TotOtrosImp> antes de <TotOpIVARetTotal>.
     by_code: dict[int, int] = defaultdict(int)
-    for line in retained:
-        by_code[line.retained_vat_code] += line.retained_total_vat
+    for line in group:
+        for tax in line.other_taxes:
+            by_code[tax.code] += tax.amount
+    retained = [ln for ln in group if ln.retained_total_vat]
+    if compra:
+        for line in retained:
+            by_code[line.retained_vat_code] += line.retained_total_vat
     for code, amount in sorted(by_code.items()):
         node = etree.SubElement(totals, "{%s}TotOtrosImp" % NS)
         _t(node, "CodImp", str(code))
         _t(node, "TotMntImp", str(amount))
+    if retained and not compra:
+        _t(totals, "TotOpIVARetTotal", str(len(retained)))
+        _t(totals, "TotIVARetTotal", str(sum(ln.retained_total_vat for ln in retained)))
 
 
 def _commission_totals(totals: etree._Element, group: list[BookLine]) -> None:
@@ -339,6 +355,8 @@ def _detail(book: etree._Element, line: BookLine, operation_type: str = "VENTA")
             _t(node, "MntIVANoRec", str(entry.amount))
         if line.common_use_vat:
             _t(detail, "IVAUsoComun", str(line.common_use_vat))
+    _other_taxes(detail, line)
+    if operation_type == "COMPRA":
         if line.retained_total_vat:
             node = etree.SubElement(detail, "{%s}OtrosImp" % NS)
             _t(node, "CodImp", str(line.retained_vat_code))
@@ -368,6 +386,16 @@ def _detail(book: etree._Element, line: BookLine, operation_type: str = "VENTA")
 # --------------------------------------------------------------------------- #
 #  Helpers
 # --------------------------------------------------------------------------- #
+def _other_taxes(detail: etree._Element, line: BookLine) -> None:
+    """<OtrosImp> de los impuestos adicionales (ILA), en cualquiera de los libros."""
+    for tax in line.other_taxes:
+        node = etree.SubElement(detail, "{%s}OtrosImp" % NS)
+        _t(node, "CodImp", str(tax.code))
+        if tax.rate is not None:
+            _t(node, "TasaImp", f"{tax.rate:g}")
+        _t(node, "MntImp", str(tax.amount))
+
+
 def _t(parent: etree._Element, tag: str, value: str) -> None:
     etree.SubElement(parent, "{%s}%s" % (NS, tag)).text = value
 

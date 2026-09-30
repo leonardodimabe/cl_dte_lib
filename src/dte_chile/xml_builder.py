@@ -96,7 +96,14 @@ def _header(doc: etree._Element, dte: DTE) -> None:
         if dte.net_amount:
             _t(totals, "TasaIVA", str(VAT_RATE))
             _t(totals, "IVA", str(dte.vat))
-    # ImptoReten va después del IVA y antes de MntTotal (orden del XSD).
+    # ImptoReten va después del IVA y antes de MntTotal (orden del XSD). Los
+    # impuestos adicionales (ILA) usan el mismo bloque; su código dice que se
+    # suman al total en vez de restarse.
+    for tax in dte.additional_taxes:
+        node = etree.SubElement(totals, "ImptoReten")
+        _t(node, "TipoImp", str(tax.code))
+        _t(node, "TasaImp", _num(tax.rate))
+        _t(node, "MontoImp", str(tax.amount_over(dte.items)))
     for retention in dte.retentions:
         # Una retención de cero no retiene nada: declararla sería anunciar un
         # impuesto que el documento no tiene. Pasa en la nota que anula, donde
@@ -189,9 +196,15 @@ def _items(doc: etree._Element, dte: DTE) -> None:
         # Sólo en las líneas afectas: una exenta no soporta la retención, y
         # declararla ahí descuadraría el total por el otro lado. El XSD admite
         # hasta dos códigos por línea.
+        #
+        # El impuesto adicional (ILA), en cambio, sólo en la línea que grava.
+        codes: list[int] = []
+        if item.additional_tax_code:
+            codes.append(item.additional_tax_code)
         if dte.retentions and not (item.exempt or dte.type.is_exempt):
-            for retention in dte.retentions[:MAX_LINE_TAX_CODES]:
-                _t(detail, "CodImpAdic", str(retention.code))
+            codes += [r.code for r in dte.retentions]
+        for code in codes[:MAX_LINE_TAX_CODES]:
+            _t(detail, "CodImpAdic", str(code))
         _t(detail, "MontoItem", str(item.amount))
 
 

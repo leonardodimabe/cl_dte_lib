@@ -32,6 +32,16 @@ from .document_types import DTEType, TransferType
 from .models import DTE, VAT_RETENTION_TOTAL, Item
 from .rut import format_rut
 
+# Cómo se nombra cada impuesto adicional en el impreso (Formato DTE, pág. 44).
+_ADDITIONAL_TAX_LABELS = {
+    23: "Impuesto adicional art. 37",
+    24: "ILA licores",
+    25: "ILA vinos",
+    26: "ILA cervezas",
+    27: "ILA bebidas analcohólicas",
+    271: "ILA bebidas azucaradas",
+}
+
 
 @dataclass
 class ResolutionInfo:
@@ -388,6 +398,10 @@ def _totals(dte: DTE) -> str:
         if dte.exempt_amount:
             rows += _total_row("Monto Exento", dte.exempt_amount)
         rows += _total_row("IVA (19%)", dte.vat)
+    for tax in dte.additional_taxes:
+        label = _ADDITIONAL_TAX_LABELS.get(tax.code, f"Impuesto adicional código {tax.code}")
+        amount = _money(tax.amount_over(dte.items))
+        rows += f'<tr><td>{label} ({_esc(f"{tax.rate:g}")}%)</td><td class="r">{amount}</td></tr>'
     for retention in dte.retentions:
         label = (
             "Menos: IVA retenido (19%)"

@@ -13,7 +13,9 @@ from .folio_report import FolioReportCover, ReportLine
 from .folios import FolioError, FolioManager, FoliosExhausted
 from .guide_book import GuideBookCover, GuideBookLine, VoidStatus
 from .models import (
+    ADDITIONAL_TAX_CODES,
     DTE,
+    AdditionalTax,
     Driver,
     GlobalDiscount,
     Issuer,
@@ -60,6 +62,8 @@ __all__ = [
     "Driver",
     "Transport",
     "Retention",
+    "AdditionalTax",
+    "ADDITIONAL_TAX_CODES",
     "GuideBookCover",
     "GuideBookLine",
     "VoidStatus",
