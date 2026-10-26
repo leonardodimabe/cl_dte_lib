@@ -278,7 +278,11 @@ def _references(root: etree._Element, s: Settlement) -> None:
         node = etree.SubElement(root, "Referencia")
         _t(node, "NroLinRef", str(position))
         _t(node, "TpoDocRef", str(reference.doc_type))
+        if reference.is_global:
+            _t(node, "IndGlobal", "1")
         _t(node, "FolioRef", str(reference.folio))
+        if reference.other_rut:
+            _t(node, "RUTOtr", reference.other_rut)
         if reference.date is not None:
             _t(node, "FchRef", reference.date.isoformat())
         if reference.code is not None:

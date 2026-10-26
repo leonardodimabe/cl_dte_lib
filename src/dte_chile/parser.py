@@ -200,6 +200,8 @@ def _reference(node: etree._Element) -> Reference:
     return Reference(
         doc_type=int(raw_type) if raw_type.isdigit() else raw_type,
         folio=_text(node, "FolioRef") or "",
+        is_global=_text(node, "IndGlobal") == "1",
+        other_rut=_text(node, "RUTOtr"),
         date=_optional_date(_text(node, "FchRef")),
         # CodRef es numérico en la factura (1, 2, 3) y alfanumérico en la
         # boleta, donde el set de certificación pide «SET».

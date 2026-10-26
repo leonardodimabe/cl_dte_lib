@@ -121,6 +121,34 @@ def test_reference_is_built():
     assert doc.findtext("Referencia/CodRef") == "1"
 
 
+def test_global_reference_and_other_rut_follow_the_xsd_order():
+    # La OC (801) y la HES que pide el cliente, y una guía global emitida por otro.
+    dte = DTE(
+        type=DTEType.AFFECTED_INVOICE,
+        folio=10,
+        issue_date=dt.date(2026, 10, 20),
+        issuer=_issuer(),
+        receiver=_receiver(),
+        items=[Item("Servicio", quantity=1, unit_price=100000)],
+        references=[
+            Reference(801, "4500123456", dt.date(2026, 10, 15), reason="OC del cliente"),
+            Reference("HES", "1000987", dt.date(2026, 10, 18)),
+            Reference(52, "0", dt.date(2026, 10, 31), reason="Guías de octubre",
+                      is_global=True, other_rut="76086428-5"),
+        ],
+    )
+    doc = etree.Element("Documento")
+    _references(doc, dte)
+    first, second, third = doc.findall("Referencia")
+    assert [n.tag for n in first] == ["NroLinRef", "TpoDocRef", "FolioRef", "FchRef", "RazonRef"]
+    assert second.findtext("TpoDocRef") == "HES"
+    assert [n.tag for n in third] == [
+        "NroLinRef", "TpoDocRef", "IndGlobal", "FolioRef", "RUTOtr", "FchRef", "RazonRef",
+    ]
+    assert third.findtext("IndGlobal") == "1"
+    assert third.findtext("RUTOtr") == "76086428-5"
+
+
 # --------------------------------------------------------------------------- #
 #  Descuentos por línea y globales (set de certificación 5038170 casos 2 y 4)
 # --------------------------------------------------------------------------- #
